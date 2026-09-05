@@ -408,3 +408,35 @@ body {
 .field-change del {
   color: #e08a7c !important;
 }
+
+/* The switch track is recessed and the knob rides on it, so the two must not
+   land on the same colour — which mapping #e9eef5 and #fff separately does. */
+.nav-switch__track {
+  background: #1b222e !important;
+  border-color: #46566d !important;
+}
+
+.nav-switch__knob {
+  background: #c2ccdc !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .6) !important;
+}
+
+.nav-switch:hover .nav-switch__track { border-color: var(--wb-primary) !important; }
+
+/* Checked, the track carries the project's primary, which the derived ramp
+   lifts to a light colour — so the knob has to darken to stay visible on it. */
+.nav-switch[aria-checked="true"] .nav-switch__track {
+  background: var(--wb-primary) !important;
+  border-color: var(--wb-primary) !important;
+}
+
+.nav-switch[aria-checked="true"] .nav-switch__knob {
+  background: #0f141c !important;
+}
+
+.nav-switch[aria-disabled="true"] .nav-switch__track {
+  background: #171d27 !important;
+  border-color: #333f4f !important;
+}
+
+.nav-switch[aria-disabled="true"] .nav-switch__knob { background: #55627a !important; }

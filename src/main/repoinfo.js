@@ -165,18 +165,32 @@ function shortDate (iso) {
  * remote, and one with no remote still reports its authors.
  */
 async function readGitInfo (repoPath) {
-  const [bare, head, lastCommit, remote, configuredEmail, configuredName, authorSample] =
+  const [revParse, lastCommit, remote, identity, authorSample] =
     await Promise.all([
-    git(repoPath, ['rev-parse', '--is-bare-repository']),
-    git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    // One invocation answers both: the output is two lines, bareness then HEAD.
+    git(repoPath, ['rev-parse', '--is-bare-repository', '--abbrev-ref', 'HEAD']),
     git(repoPath, ['log', '-1', '--format=%aI%x00%an%x00%s']),
     git(repoPath, ['remote', 'get-url', 'origin']),
-    git(repoPath, ['config', 'user.email']),
-    git(repoPath, ['config', 'user.name']),
+    // And one for both identity keys, rather than one per key.
+    git(repoPath, ['config', '--get-regexp', '^user\\.(email|name)$']),
     // Name and email together: the email is the identity Workbook assigns
     // against, and the name is the only thing worth showing a human.
     git(repoPath, ['log', `-n${AUTHOR_SAMPLE}`, '--format=%an%x1f%ae'])
   ])
+
+  const [bare, head] = (revParse ?? '').split('\n')
+
+  // `config --get-regexp` prints "key value" per line, in no fixed order.
+  let configuredEmail = null
+  let configuredName = null
+  for (const line of (identity ?? '').split('\n')) {
+    const separator = line.indexOf(' ')
+    if (separator === -1) continue
+    const key = line.slice(0, separator)
+    const value = line.slice(separator + 1).trim()
+    if (key === 'user.email') configuredEmail = value
+    if (key === 'user.name') configuredName = value
+  }
 
   const [committedAt, lastAuthor, subject] = (lastCommit ?? '').split('\0')
 

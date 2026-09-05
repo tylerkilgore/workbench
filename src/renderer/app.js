@@ -807,10 +807,14 @@ el('check-updates').addEventListener('click', async () => {
   if (result?.skipped) el('import-status').textContent = ''
 })
 
-el('refresh').addEventListener('click', () => {
+el('refresh').addEventListener('click', async () => {
   setMenu(false)
-  loadProjects()
+  // The directory is cached on the set of projects, which cannot notice a new
+  // commit — so the explicit refresh is what re-reads history.
+  await api.listPeople(true).then((r) => { state.people = r.people }).catch(() => {})
+  await loadProjects()
   if (state.view === 'queue') loadQueue()
+  if (state.view === 'people') loadPeople()
 })
 
 api.onImportProgress(({ done, total }) => {

@@ -51,6 +51,48 @@ const BORDER = {
   '#8496b0': '#3d4b5f', '#cbd5e2': '#2f3a4a', '#e2e8f2': '#232c39'
 }
 
+// Corrections, appended after the generated rules so they win at equal
+// specificity.
+//
+// Mapping by colour alone cannot know what a colour *means*. A white fill is
+// usually a surface, and mapping it to the dark surface is right — but on a
+// switch knob white means "the raised part you can see against the track", and
+// mapping both to near-identical darks makes the control disappear. These are
+// the places where the role matters more than the value.
+const CORRECTIONS = `
+/* The switch track is recessed and the knob rides on it, so the two must not
+   land on the same colour — which mapping #e9eef5 and #fff separately does. */
+.nav-switch__track {
+  background: #1b222e !important;
+  border-color: #46566d !important;
+}
+
+.nav-switch__knob {
+  background: #c2ccdc !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .6) !important;
+}
+
+.nav-switch:hover .nav-switch__track { border-color: var(--wb-primary) !important; }
+
+/* Checked, the track carries the project's primary, which the derived ramp
+   lifts to a light colour — so the knob has to darken to stay visible on it. */
+.nav-switch[aria-checked="true"] .nav-switch__track {
+  background: var(--wb-primary) !important;
+  border-color: var(--wb-primary) !important;
+}
+
+.nav-switch[aria-checked="true"] .nav-switch__knob {
+  background: #0f141c !important;
+}
+
+.nav-switch[aria-disabled="true"] .nav-switch__track {
+  background: #171d27 !important;
+  border-color: #333f4f !important;
+}
+
+.nav-switch[aria-disabled="true"] .nav-switch__knob { background: #55627a !important; }
+`
+
 const isBackground = (p) => p === 'background' || p === 'background-color'
 const isBorder = (p) => p === 'border' || p.startsWith('border-') || p === 'outline' ||
   p === 'outline-color'
@@ -179,7 +221,7 @@ input, textarea, select, button { color-scheme: dark !important; }
 
 `
 
-  fs.writeFileSync(target, header + rules.join('\n') + '\n')
+  fs.writeFileSync(target, header + rules.join('\n') + '\n' + CORRECTIONS)
   console.log(`generate-board-dark: ${rules.length} rules, ${covered} declarations -> ${path.relative(process.cwd(), target)}`)
 }
 

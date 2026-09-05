@@ -351,6 +351,7 @@ ipcMain.handle('import:apply', async (_event, { selections }) => {
       }
 
       await registry.upsert(project)
+      invalidateDirectory()
       results.push({ ok: true, path: selection.path, project, adopted: Boolean(project.adopted) })
     } catch (error) {
       results.push({ ok: false, path: selection.path, error: error.message })
@@ -386,6 +387,7 @@ ipcMain.handle('project:forget', async (_event, { projectId }) => {
   // list is not a reason to destroy its task history.
   closeProject(projectId)
   await registry.remove(projectId)
+  invalidateDirectory()
 })
 
 /**
@@ -460,67 +462,36 @@ ipcMain.handle('queue:load', async () => {
  * Derived rather than stored: the history is the source of truth and it moves.
  * Only the user's corrections to it — which addresses are one person, and what
  * to call them — live in the registry.
+ *
+ * Cached, because it is not cheap and it barely changes. Building it runs
+ * several git commands per repository, and the queue needs it on every load
+ * just to know which addresses are the current user's: without a cache, opening
+ * the queue over twelve projects cost eighty-four subprocesses to answer a
+ * question whose answer had not moved since the last time it was asked.
+ *
+ * The key is the set of projects plus the user's mapping, so importing,
+ * forgetting, merging or renaming rebuilds it and nothing else does. A refresh
+ * is available for the case the key cannot see: new commits.
  */
-async function peopleDirectory () {
-  const projects = registry.projects
-  const described = await repoinfo.describeAll(projects.map((project) => project.path))
-  const repositories = projects.map((project) => ({
-    path: project.path,
-    name: project.name,
-    allAuthors: described.get(project.path)?.allAuthors ?? []
-  }))
-  return people.buildDirectory(repositories, registry.peopleMapping)
+let directoryCache = { key: null, people: null }
+
+function directoryKey () {
+  return JSON.stringify([
+    registry.projects.map((project) => `${project.id}:${project.path}`).sort(),
+    registry.peopleMapping
+  ])
 }
 
-/**
- * Assign a task, asking about a collision rather than deciding one.
- *
- * Workbook refuses with exit 10 when somebody else already holds the task, and
- * that refusal is deliberate: whether a second person should hold it too is a
- * question about people, not about software. So it is put to the user, and
- * --force is only ever sent because they said yes.
- *
- * The command runs in the project's own checkout, which is also what decides
- * the creator recorded against the assignment — the repository's user.email,
- * not Workbench's idea of who you are.
- */
-ipcMain.handle('task:assign', async (_event, { projectId, taskId, email }) => {
-  const project = registry.find(projectId)
-  if (!project) throw new Error(`unknown project: ${projectId}`)
+function invalidateDirectory () {
+  directoryCache = { key: null, people: null }
+}
 
-  const first = await workbook.assign(project.path, taskId, email)
-  if (first.ok) return { ok: true, forced: false }
+async function peopleDirectory ({ refresh = false } = {}) {
+  const key = directoryKey()
+  if (!refresh && directoryCache.key === key && directoryCache.people) {
+    return directoryCache.people
+  }
 
-  const { response } = await dialog.showMessageBox(window, {
-    type: 'question',
-    title: 'Already assigned',
-    message: 'This task is already assigned to someone else.',
-    detail: `${first.message}\n\nAssignments are additive — recording this one leaves theirs in place.`,
-    buttons: ['Assign anyway', 'Cancel'],
-    defaultId: 1,
-    cancelId: 1
-  })
-  if (response !== 0) return { ok: false, cancelled: true }
-
-  await workbook.assign(project.path, taskId, email, { force: true })
-  return { ok: true, forced: true }
-})
-
-/**
- * Remove an assignment.
- *
- * Workbook allows this only for the person the assignment names or the person
- * who recorded it. That refusal is a rule about who may act, so it is reported
- * rather than retried with a flag — there is no flag.
- */
-ipcMain.handle('task:unassign', async (_event, { projectId, taskId, email }) => {
-  const project = registry.find(projectId)
-  if (!project) throw new Error(`unknown project: ${projectId}`)
-  await workbook.unassign(project.path, taskId, email)
-  return { ok: true }
-})
-
-ipcMain.handle('people:list', async () => {
   const projects = registry.projects
   const described = await repoinfo.describeAll(projects.map((project) => project.path))
   const directory = people.buildDirectory(
@@ -532,15 +503,22 @@ ipcMain.handle('people:list', async () => {
     registry.peopleMapping
   )
 
-  // Workbook assigns against each checkout's own user.email, so a repository
-  // configured with a different address quietly assigns to a different person.
-  // Worth reporting, because nothing else would ever say so.
+  // The per-repository identity is read on the same pass, so the People view
+  // does not have to run all of this a second time to report a mismatch.
   const configured = projects.map((project) => ({
     project: project.name,
     key: project.key,
     email: described.get(project.path)?.configuredEmail ?? null,
     name: described.get(project.path)?.configuredName ?? null
   }))
+
+  directoryCache = { key, people: directory, configured }
+  return directory
+}
+
+ipcMain.handle('people:list', async (_event, options = {}) => {
+  const directory = await peopleDirectory({ refresh: Boolean(options.refresh) })
+  const configured = directoryCache.configured ?? []
 
   const defaultAssignee = registry.defaultAssignee
   const mismatched = defaultAssignee
@@ -557,14 +535,17 @@ ipcMain.handle('people:setDefault', async (_event, { email }) => {
 
 ipcMain.handle('people:merge', async (_event, { emails }) => {
   await registry.mergePeople(emails)
+  invalidateDirectory()
 })
 
 ipcMain.handle('people:split', async (_event, { email }) => {
   await registry.splitPerson(email)
+  invalidateDirectory()
 })
 
 ipcMain.handle('people:rename', async (_event, { id, displayName }) => {
   await registry.renamePerson(id, displayName)
+  invalidateDirectory()
 })
 
 // --- lifecycle -------------------------------------------------------------

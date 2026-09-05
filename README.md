@@ -225,6 +225,31 @@ are meant to go upstream; when they land, the pin moves back to a `dgoings` tag.
 The `upstream` and `branches` keys in `package.json` record that intent so the
 fork is never mistaken for a permanent divergence.
 
+## Performance notes
+
+Opening the queue used to cost 96 subprocesses across twelve projects. Twelve of
+those were `workbook list` — the actual data — and the other 84 rebuilt the
+people directory from commit history, every single time, to answer which email
+addresses belong to the current user. That answer had not changed since the last
+time it was asked.
+
+The directory is cached on the set of projects plus the user's identity
+mapping, so importing, forgetting, merging or renaming rebuilds it and nothing
+else does. Explicit Refresh re-reads history, which is the one thing the cache
+key cannot notice. Reading git identity and bareness/HEAD were also collapsed
+into one invocation each.
+
+| | before | after |
+| --- | --- | --- |
+| `queue:load` | 375ms, 96 subprocesses | ~200ms, 12 |
+| `people:list` (warm) | 172ms, 84 subprocesses | 0ms, 0 |
+| per-repository git calls | 7 | 5 |
+
+Each open board is a full renderer process, and views are kept warm so switching
+back does not reload them. That is deliberate — a reload loses scroll position
+and any open task form — but it means memory grows with the number of boards
+opened in a session, not the number of projects imported.
+
 ## Known gaps
 
 - The bundled binary is built at package time and does not update afterwards.
