@@ -63,7 +63,11 @@ jobs:
 
       - name: Verify the staged CLI runs
         shell: bash
-        run: ./build/workbook version
+        run: |
+          # Go writes exactly the name it is given, so Windows stages
+          # workbook.exe and the other two stage workbook.
+          if [ -f build/workbook.exe ]; then ./build/workbook.exe version
+          else ./build/workbook version; fi
 
       # ──── Windows code signing (Azure Trusted Signing) ────
       # Signing is optional: without these secrets the build still produces

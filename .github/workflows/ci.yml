@@ -89,3 +89,37 @@ jobs:
             exit 1
           fi
           echo "board-dark.css is current"
+
+  # Staging the CLI is the only part of the build that is genuinely
+  # platform-specific, and every Windows problem so far has been in it: npm
+  # choosing cmd.exe, Git Bash handing POSIX paths to a native node, the
+  # extension Go does not add. Finding those at tag time costs a whole release
+  # cycle each, so the step runs here on every push instead.
+  stage-windows:
+    name: Stage the CLI on Windows
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - run: npm ci
+
+      - name: Build and stage the Workbook CLI
+        shell: bash
+        run: npm run stage
+
+      - name: The staged binary is named and runnable as Windows expects
+        shell: bash
+        run: |
+          test -f build/workbook.exe || { echo "build/workbook.exe missing"; ls -la build; exit 1; }
+          ./build/workbook.exe version

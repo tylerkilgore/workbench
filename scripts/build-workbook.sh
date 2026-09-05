@@ -34,8 +34,13 @@ if ! command -v node >/dev/null 2>&1; then
 	exit 1
 fi
 
-pinned_url=$(node -p "require('${project_root}/package.json').workbook.repository")
-pinned_ref=${WORKBOOK_REF:-$(node -p "require('${project_root}/package.json').workbook.ref")}
+# Read the pin with node's working directory set and a relative path, never an
+# absolute one embedded in the expression. Under Git Bash the shell's paths are
+# POSIX (/d/a/...) while node is a native Windows binary that cannot resolve
+# them; MSYS rewrites arguments that look like paths, but not a path inside a
+# JavaScript string.
+pinned_url=$(cd -- "${project_root}" && node -p "require('./package.json').workbook.repository")
+pinned_ref=${WORKBOOK_REF:-$(cd -- "${project_root}" && node -p "require('./package.json').workbook.ref")}
 
 if [ -n "${WORKBOOK_REPO:-}" ]; then
 	repo=${WORKBOOK_REPO}
