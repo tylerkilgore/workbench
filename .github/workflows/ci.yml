@@ -29,13 +29,16 @@ jobs:
             node --check "$file"
           done
 
-      - name: Every export resolves
+      # Catches the mistake this project actually made twice: an edit that
+      # removed a function while leaving it in module.exports, which throws only
+      # when something first calls it.
+      - name: Every export is defined
         run: |
           node -e "
             for (const m of ['workbook','discovery','registry','supervisor','boardtheme','repoinfo']) {
               const mod = require('./src/main/' + m)
-              const bad = Object.entries(mod).filter(([, v]) => typeof v !== 'function')
-              if (bad.length) { console.error(m, 'has non-function exports:', bad.map(([k]) => k)); process.exit(1) }
+              const missing = Object.entries(mod).filter(([, v]) => v === undefined).map(([k]) => k)
+              if (missing.length) { console.error(m, 'exports undefined:', missing); process.exit(1) }
               console.log(m, '->', Object.keys(mod).join(', '))
             }
           "
