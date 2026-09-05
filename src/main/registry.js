@@ -21,14 +21,36 @@ class Registry {
   }
 
   async load () {
+    let raw
     try {
-      const raw = await fs.readFile(this.file, 'utf8')
-      const parsed = JSON.parse(raw)
-      this.state = { ...structuredClone(EMPTY), ...parsed }
+      raw = await fs.readFile(this.file, 'utf8')
     } catch {
-      this.state = structuredClone(EMPTY) // First run, or an unreadable file.
+      this.state = structuredClone(EMPTY) // First run.
+      return this.state
     }
-    return this.state
+
+    try {
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed.projects)) throw new Error('no projects array')
+      this.state = { ...structuredClone(EMPTY), ...parsed }
+      return this.state
+    } catch (error) {
+      // A registry that exists but will not parse is not the same as no
+      // registry. Starting empty and then saving over it would destroy the
+      // user's project list for good, so the unreadable file is kept and the
+      // next save writes beside it rather than on top of it.
+      const quarantine = `${this.file}.corrupt-${Date.now()}`
+      try {
+        await fs.rename(this.file, quarantine)
+        console.error(`workbench: registry.json could not be parsed (${error.message}); ` +
+          `kept a copy at ${quarantine}`)
+      } catch {
+        console.error(`workbench: registry.json could not be parsed (${error.message}) ` +
+          'and could not be set aside')
+      }
+      this.state = structuredClone(EMPTY)
+      return this.state
+    }
   }
 
   async save () {
