@@ -9,6 +9,7 @@ const { Supervisor } = require('./supervisor')
 const { darkPrimaryRamp, DEFAULT_PRIMARY } = require('./boardtheme')
 const discovery = require('./discovery')
 const repoinfo = require('./repoinfo')
+const people = require('./people')
 const workbook = require('./workbook')
 const { setupUpdater } = require('./updater')
 
@@ -423,6 +424,9 @@ ipcMain.handle('queue:load', async () => {
         labels: task.labels ?? [],
         updatedAt: task.updatedAt,
         blocked: (task.dependencies ?? []).length > 0,
+        // Workbook records an assignment as an email address; the principal is
+        // the person it names, the creator the person who recorded it.
+        assignees: (task.assignments ?? []).map((assignment) => assignment.principal),
         projectId: entry.project.id,
         projectName: entry.project.name,
         projectKey: entry.project.key
@@ -435,7 +439,84 @@ ipcMain.handle('queue:load', async () => {
     (order[a.priority] ?? 3) - (order[b.priority] ?? 3) ||
     String(b.updatedAt).localeCompare(String(a.updatedAt))
   )
-  return { tasks, failures }
+
+  // "Mine" has to mean every address that is me, not just the one configured:
+  // a task assigned from a repository whose user.email differs is still mine.
+  const directory = await peopleDirectory()
+  const me = registry.defaultAssignee
+    ? people.findPerson(directory, registry.defaultAssignee)
+    : null
+  const myEmails = me ? me.emails : (registry.defaultAssignee ? [registry.defaultAssignee] : [])
+
+  for (const task of tasks) {
+    task.mine = task.assignees.some((email) => myEmails.includes(email.toLowerCase()))
+  }
+  return { tasks, failures, myEmails }
+})
+
+/**
+ * The people directory, derived from the imported repositories' commit history.
+ *
+ * Derived rather than stored: the history is the source of truth and it moves.
+ * Only the user's corrections to it — which addresses are one person, and what
+ * to call them — live in the registry.
+ */
+async function peopleDirectory () {
+  const projects = registry.projects
+  const described = await repoinfo.describeAll(projects.map((project) => project.path))
+  const repositories = projects.map((project) => ({
+    path: project.path,
+    name: project.name,
+    allAuthors: described.get(project.path)?.allAuthors ?? []
+  }))
+  return people.buildDirectory(repositories, registry.peopleMapping)
+}
+
+ipcMain.handle('people:list', async () => {
+  const projects = registry.projects
+  const described = await repoinfo.describeAll(projects.map((project) => project.path))
+  const directory = people.buildDirectory(
+    projects.map((project) => ({
+      path: project.path,
+      name: project.name,
+      allAuthors: described.get(project.path)?.allAuthors ?? []
+    })),
+    registry.peopleMapping
+  )
+
+  // Workbook assigns against each checkout's own user.email, so a repository
+  // configured with a different address quietly assigns to a different person.
+  // Worth reporting, because nothing else would ever say so.
+  const configured = projects.map((project) => ({
+    project: project.name,
+    key: project.key,
+    email: described.get(project.path)?.configuredEmail ?? null,
+    name: described.get(project.path)?.configuredName ?? null
+  }))
+
+  const defaultAssignee = registry.defaultAssignee
+  const mismatched = defaultAssignee
+    ? configured.filter((entry) => entry.email && entry.email.toLowerCase() !== defaultAssignee)
+    : []
+
+  return { people: directory, defaultAssignee, configured, mismatched }
+})
+
+ipcMain.handle('people:setDefault', async (_event, { email }) => {
+  await registry.setDefaultAssignee(email)
+  return { defaultAssignee: registry.defaultAssignee }
+})
+
+ipcMain.handle('people:merge', async (_event, { emails }) => {
+  await registry.mergePeople(emails)
+})
+
+ipcMain.handle('people:split', async (_event, { email }) => {
+  await registry.splitPerson(email)
+})
+
+ipcMain.handle('people:rename', async (_event, { id, displayName }) => {
+  await registry.renamePerson(id, displayName)
 })
 
 // --- lifecycle -------------------------------------------------------------
@@ -464,6 +545,23 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(async () => {
   await registry.load()
+
+  // Seed the default assignee from git's own identity. `--assign self` already
+  // records this address, so adopting it makes "mine" correct before the user
+  // has configured anything; leaving it null would make the filter silently
+  // match nothing.
+  if (!registry.defaultAssignee) {
+    try {
+      const identity = await repoinfo.globalGitEmail()
+      if (identity) await registry.setDefaultAssignee(identity)
+    } catch (error) {
+      // A convenience, not a prerequisite. Failing here once took the whole
+      // window with it, because this runs before createWindow in the same
+      // promise chain.
+      console.warn(`workbench: could not read a default identity: ${error.message}`)
+    }
+  }
+
   createWindow()
   updater = setupUpdater()
   app.on('activate', () => {

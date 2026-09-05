@@ -11,6 +11,11 @@ const state = {
   // they survive a rescan, so refining a search does not lose the filter.
   query: '',
   filter: 'all',
+  queueQuery: '',
+  queueFilter: 'all',
+  tasks: [],
+  people: [],
+  myEmails: [],
   // Selections are keyed by path so they survive re-rendering under a filter —
   // a repository checked and then filtered out must still import.
   selected: new Set(),
@@ -25,7 +30,7 @@ function setView (view, projectId = null) {
   state.view = view
   state.activeProjectId = projectId
 
-  for (const name of ['queue', 'import', 'project']) {
+  for (const name of ['queue', 'import', 'people', 'project']) {
     el(`view-${name}`).hidden = name !== view
   }
   for (const button of document.querySelectorAll('.rail-item')) {
@@ -39,6 +44,7 @@ function setView (view, projectId = null) {
   // that is not a project must hide it, or it would cover this document.
   if (view !== 'project') api.showChrome()
   if (view === 'queue') loadQueue()
+  if (view === 'people') loadPeople()
 }
 
 // --- projects --------------------------------------------------------------
@@ -107,7 +113,9 @@ async function loadQueue () {
   const failures = el('queue-failures')
   body.innerHTML = '<div class="empty">Loading…</div>'
 
-  const { tasks, failures: problems } = await api.loadQueue()
+  const { tasks, failures: problems, myEmails } = await api.loadQueue()
+  state.tasks = tasks
+  state.myEmails = myEmails ?? []
 
   if (problems.length > 0) {
     failures.hidden = false
@@ -118,13 +126,52 @@ async function loadQueue () {
     failures.hidden = true
   }
 
+  renderQueue()
+}
+
+function matchesTaskQuery (task, query) {
+  if (!query) return true
+  const haystack = [
+    task.title, task.projectName, task.projectKey, task.status, task.priority,
+    ...(task.labels ?? []), ...(task.assignees ?? [])
+  ].filter(Boolean).join(' ').toLowerCase()
+  return query.toLowerCase().split(/\s+/).filter(Boolean)
+    .every((term) => haystack.includes(term))
+}
+
+function visibleTasks () {
+  return state.tasks.filter((task) => {
+    if (state.queueFilter === 'mine' && !task.mine) return false
+    if (state.queueFilter === 'unassigned' && (task.assignees ?? []).length > 0) return false
+    return matchesTaskQuery(task, state.queueQuery)
+  })
+}
+
+/** The name to show for an assignee, falling back to the address itself. */
+function assigneeLabel (email) {
+  const person = state.people.find((candidate) => candidate.emails.includes(email.toLowerCase()))
+  return person ? person.displayName : email
+}
+
+function renderQueue () {
+  const body = el('queue-body')
   body.innerHTML = ''
-  if (tasks.length === 0) {
+
+  const visible = visibleTasks()
+  el('queue-count').textContent = state.tasks.length === 0
+    ? ''
+    : `${visible.length}/${state.tasks.length}`
+
+  if (state.tasks.length === 0) {
     body.innerHTML = '<div class="empty">No open tasks. Import a repository to get started.</div>'
     return
   }
+  if (visible.length === 0) {
+    body.innerHTML = '<div class="empty">Nothing matches that filter.</div>'
+    return
+  }
 
-  for (const task of tasks) {
+  for (const task of visible) {
     const row = document.createElement('div')
     row.className = 'task'
 
@@ -136,6 +183,15 @@ async function loadQueue () {
     title.className = 'task-title'
     title.textContent = task.title
 
+    const assignees = document.createElement('span')
+    for (const email of task.assignees ?? []) {
+      const chip = document.createElement('span')
+      chip.className = 'assignee' + (state.myEmails.includes(email.toLowerCase()) ? ' assignee--me' : '')
+      chip.textContent = assigneeLabel(email)
+      chip.title = email
+      assignees.append(chip)
+    }
+
     const status = document.createElement('span')
     status.className = 'label'
     status.textContent = task.status
@@ -144,9 +200,98 @@ async function loadQueue () {
     project.className = 'task-meta'
     project.textContent = `${task.projectKey} · ${task.projectName}`
 
-    row.append(priority, title, status, project)
+    row.append(priority, title, assignees, status, project)
     row.title = task.id
     row.addEventListener('click', () => openProject(task.projectId))
+    body.append(row)
+  }
+}
+
+// --- people ------------------------------------------------------------------
+
+async function loadPeople () {
+  const body = el('people-body')
+  body.innerHTML = '<div class="empty">Reading commit history…</div>'
+
+  const { people, defaultAssignee, mismatched } = await api.listPeople()
+  state.people = people
+
+  const warning = el('identity-warning')
+  if (mismatched.length > 0) {
+    warning.hidden = false
+    // Worth surfacing loudly: an assignment made from one of these checkouts
+    // is recorded against a different person, and nothing else would say so.
+    warning.textContent =
+      `These projects commit as an address that is not yours, so "assign self" ` +
+      `there records someone else:\n` +
+      mismatched.map((entry) => `  ${entry.key} — ${entry.email}`).join('\n')
+  } else {
+    warning.hidden = true
+  }
+
+  body.innerHTML = ''
+  if (people.length === 0) {
+    body.innerHTML = '<div class="empty">No contributors yet. Import a repository first.</div>'
+    return
+  }
+
+  for (const person of people) {
+    const row = document.createElement('div')
+    row.className = 'person'
+    const isMe = person.emails.includes(defaultAssignee)
+    if (isMe) row.classList.add('person--me')
+    if (person.bot) row.classList.add('person--bot')
+
+    const identity = document.createElement('div')
+    const name = document.createElement('div')
+    name.className = 'person-name'
+    const nameInput = document.createElement('input')
+    nameInput.type = 'text'
+    nameInput.value = person.displayName
+    nameInput.setAttribute('aria-label', 'Display name')
+    nameInput.addEventListener('change', async () => {
+      await api.renamePerson(person.id, nameInput.value.trim())
+      loadPeople()
+    })
+    name.append(nameInput)
+
+    const emails = document.createElement('div')
+    emails.className = 'person-emails'
+    for (const email of person.emails) {
+      const chip = document.createElement('span')
+      chip.className = 'person-email' +
+        (email === person.id ? ' person-email--primary' : '')
+      chip.textContent = email
+      // Splitting is per-address: the way to undo a wrong merge is to take the
+      // address back out, not to rebuild the group.
+      if (person.emails.length > 1) {
+        chip.title = 'Click to separate this address into its own person'
+        chip.style.cursor = 'pointer'
+        chip.addEventListener('click', async () => {
+          await api.splitPerson(email)
+          loadPeople()
+        })
+      }
+      emails.append(chip)
+    }
+    identity.append(name, emails)
+
+    const stat = document.createElement('span')
+    stat.className = 'person-stat'
+    stat.textContent = `${person.commits} commits · ${person.repos.length} repo${person.repos.length === 1 ? '' : 's'}`
+    stat.title = person.repos.join(', ')
+
+    const action = document.createElement('button')
+    action.type = 'button'
+    action.className = isMe ? 'primary' : 'ghost inline'
+    action.textContent = isMe ? 'This is me' : 'Set as me'
+    action.disabled = isMe
+    action.addEventListener('click', async () => {
+      await api.setDefaultAssignee(person.id)
+      loadPeople()
+    })
+
+    row.append(identity, stat, action)
     body.append(row)
   }
 }
@@ -451,6 +596,21 @@ api.onThemeChanged(paintTheme)
 for (const button of document.querySelectorAll('.rail-item')) {
   button.addEventListener('click', () => setView(button.dataset.view))
 }
+el('queue-search').addEventListener('input', () => {
+  state.queueQuery = el('queue-search').value.trim()
+  renderQueue()
+})
+
+for (const button of document.querySelectorAll('[data-queue-filter]')) {
+  button.addEventListener('click', () => {
+    state.queueFilter = button.dataset.queueFilter
+    for (const other of document.querySelectorAll('[data-queue-filter]')) {
+      other.classList.toggle('active', other === button)
+    }
+    renderQueue()
+  })
+}
+
 el('dismiss-key-note').addEventListener('click', dismissKeyNote)
 el('pick-folder').addEventListener('click', pickFolder)
 el('rescan').addEventListener('click', () => {
@@ -535,6 +695,13 @@ async function boot () {
     el('binary-note').textContent = error.message
   }
   await loadProjects()
+  // The directory is what turns an address on a task into a name, so it is
+  // loaded before the queue draws rather than after.
+  try {
+    state.people = (await api.listPeople()).people
+  } catch {
+    // A directory that cannot be built is not a reason to have no queue.
+  }
   setView('queue')
 }
 

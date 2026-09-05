@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('workbench', {
 
   loadQueue: () => ipcRenderer.invoke('queue:load'),
 
+  listPeople: () => ipcRenderer.invoke('people:list'),
+  setDefaultAssignee: (email) => ipcRenderer.invoke('people:setDefault', { email }),
+  mergePeople: (emails) => ipcRenderer.invoke('people:merge', { emails }),
+  splitPerson: (email) => ipcRenderer.invoke('people:split', { email }),
+  renamePerson: (id, displayName) => ipcRenderer.invoke('people:rename', { id, displayName }),
+
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
 
   getTheme: () => ipcRenderer.invoke('theme:get'),

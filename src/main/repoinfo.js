@@ -9,6 +9,7 @@
 
 const { execFile } = require('node:child_process')
 const fs = require('node:fs/promises')
+const os = require('node:os')
 const path = require('node:path')
 
 // A runaway git call must not hang a scan of a hundred repositories, and no
@@ -164,30 +165,60 @@ function shortDate (iso) {
  * remote, and one with no remote still reports its authors.
  */
 async function readGitInfo (repoPath) {
-  const [bare, head, lastCommit, remote, authorSample] = await Promise.all([
+  const [bare, head, lastCommit, remote, configuredEmail, configuredName, authorSample] =
+    await Promise.all([
     git(repoPath, ['rev-parse', '--is-bare-repository']),
     git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']),
     git(repoPath, ['log', '-1', '--format=%aI%x00%an%x00%s']),
     git(repoPath, ['remote', 'get-url', 'origin']),
-    git(repoPath, ['log', `-n${AUTHOR_SAMPLE}`, '--format=%an'])
+    git(repoPath, ['config', 'user.email']),
+    git(repoPath, ['config', 'user.name']),
+    // Name and email together: the email is the identity Workbook assigns
+    // against, and the name is the only thing worth showing a human.
+    git(repoPath, ['log', `-n${AUTHOR_SAMPLE}`, '--format=%an%x1f%ae'])
   ])
 
   const [committedAt, lastAuthor, subject] = (lastCommit ?? '').split('\0')
 
   // Counted from a bounded sample, so this is "who has been working on it
   // lately", not a lifetime tally — which is the more useful answer anyway.
+  //
+  // Keyed by email because that is the identity that matters: one person
+  // commits as "Tyler" and "tyler kilgore" from the same address, and counting
+  // those separately would invent two people.
   const counts = new Map()
-  for (const name of (authorSample ?? '').split('\n')) {
-    const author = name.trim()
-    if (author) counts.set(author, (counts.get(author) ?? 0) + 1)
+  for (const line of (authorSample ?? '').split('\n')) {
+    if (!line.trim()) continue
+    const [name, email] = line.split('\u001f')
+    const key = (email ?? '').trim().toLowerCase()
+    if (!key) continue
+    const entry = counts.get(key) ?? { email: key, names: new Map(), commits: 0 }
+    entry.commits += 1
+    const display = (name ?? '').trim()
+    if (display) entry.names.set(display, (entry.names.get(display) ?? 0) + 1)
+    counts.set(key, entry)
   }
-  const authors = [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([name, commits]) => ({ name, commits }))
+
+  const allAuthors = [...counts.values()]
+    .map((entry) => ({
+      email: entry.email,
+      // The spelling they use most often, not the first one seen.
+      name: [...entry.names.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? entry.email,
+      commits: entry.commits
+    }))
+    .sort((a, b) => b.commits - a.commits)
+
+  const authors = allAuthors.slice(0, 3)
 
   return {
     bare: bare === 'true',
+    // Every contributor in the sample, for the people directory. The row only
+    // shows the top few, but the directory wants them all.
+    allAuthors,
+    // Workbook records an assignment against this checkout's user.email, so a
+    // repository configured with a different one assigns to a different person.
+    configuredEmail: configuredEmail || null,
+    configuredName: configuredName || null,
     branch: head && head !== 'HEAD' ? head : null,
     detached: head === 'HEAD',
     remote: remote ?? null,
@@ -246,4 +277,17 @@ async function describeAll (repoPaths, { concurrency = 8, onProgress } = {}) {
   return results
 }
 
-module.exports = { describe, describeAll, detectStacks, readGitInfo, shortDate }
+/**
+ * The identity git would use outside any repository.
+ *
+ * This is what `workbook --assign self` records in a checkout that sets no
+ * user.email of its own, which makes it the right seed for "me".
+ */
+async function globalGitEmail () {
+  const email = await git(os.homedir(), ['config', '--global', 'user.email'])
+  return email ? email.trim().toLowerCase() : null
+}
+
+module.exports = {
+  describe, describeAll, detectStacks, readGitInfo, shortDate, globalGitEmail
+}

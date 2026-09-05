@@ -45,6 +45,9 @@
       <button class="rail-item" data-view="import" type="button">
         <span class="glyph">+</span> Import repositories
       </button>
+      <button class="rail-item" data-view="people" type="button">
+        <span class="glyph">@</span> People
+      </button>
     </nav>
 
     <div class="rail-label">Projects</div>
@@ -59,6 +62,17 @@
         <h1>Now</h1>
         <p class="subtitle">Open tasks across every imported project, ranked by priority.</p>
       </header>
+      <div class="filter-bar">
+        <input id="queue-search" class="search" type="search" autocomplete="off"
+               placeholder="Search tasks, projects, labels or assignees…"
+               aria-label="Search tasks">
+        <div class="chips" role="group" aria-label="Filter tasks">
+          <button class="chip active" data-queue-filter="all" type="button">All</button>
+          <button class="chip" data-queue-filter="mine" type="button">Mine</button>
+          <button class="chip" data-queue-filter="unassigned" type="button">Unassigned</button>
+        </div>
+        <span id="queue-count" class="result-count"></span>
+      </div>
       <div id="queue-failures" class="failures" hidden></div>
       <div id="queue-body" class="queue view-scroll"></div>
     </section>
@@ -121,6 +135,22 @@
         <span id="import-status" class="import-status"></span>
         <button id="do-import" class="primary" type="button">Import selected</button>
       </footer>
+    </section>
+
+    <!-- Who works on these repositories, read out of their commit history. -->
+    <section id="view-people" class="view" hidden>
+      <header class="view-head">
+        <h1>People</h1>
+        <p class="subtitle">
+          Built from the commit history of every imported project. Workbook
+          assigns against an email address, so these are the addresses a task
+          can be assigned to.
+        </p>
+      </header>
+
+      <div id="identity-warning" class="failures" hidden></div>
+
+      <div id="people-body" class="people view-scroll"></div>
     </section>
 
     <!-- Shown while a board is loading or after it fails. The board itself is a
