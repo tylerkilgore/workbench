@@ -52,15 +52,27 @@ else
 		git clone --quiet "${pinned_url}" "${repo}"
 	fi
 	echo "build-workbook: checking out ${pinned_ref}"
-	git -C "${repo}" fetch --quiet --tags origin
+	# A pin may be a tag or an exact commit. Fetching the ref by name covers a
+	# tag or branch; the bare fetch that follows covers a commit that no ref
+	# points at any more, which a `--tags` fetch alone would never retrieve.
+	git -C "${repo}" fetch --quiet --tags origin || true
+	git -C "${repo}" fetch --quiet origin "${pinned_ref}" 2>/dev/null || true
 	git -C "${repo}" checkout --quiet --detach "${pinned_ref}"
 fi
 
+# `go build -o <name>` writes exactly the name it is given — it does not append
+# .exe on Windows — and Workbench looks for workbook.exe there, so the name is
+# decided here rather than left to the toolchain.
+case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN*) binary_name=workbook.exe ;;
+	*) binary_name=workbook ;;
+esac
+
 mkdir -p -- "${project_root}/build"
-echo "build-workbook: building from $(git -C "${repo}" rev-parse --short HEAD)"
-"${repo}/scripts/install.sh" "${project_root}/build" workbook
+echo "build-workbook: building from $(git -C "${repo}" rev-parse --short HEAD) as ${binary_name}"
+"${repo}/scripts/install.sh" "${project_root}/build" "${binary_name}"
 
 # The MIT licence travels with the binary: the app redistributes it.
 cp -- "${repo}/LICENSE" "${project_root}/build/WORKBOOK-LICENSE"
 
-echo "build-workbook: staged $("${project_root}/build/workbook" version)"
+echo "build-workbook: staged $("${project_root}/build/${binary_name}" version)"

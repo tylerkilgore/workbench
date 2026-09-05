@@ -209,19 +209,21 @@ size, or a radius — so the worst a drift can do is leave a light patch.
 | --- | --- |
 | macOS (arm64, x64) | Built and released. Ad-hoc signed, not notarized. |
 | Linux (x64, arm64) | Built and released as AppImage and deb. |
-| Windows | **Blocked upstream.** |
+| Windows (x64, arm64) | Built and released, using the ported CLI below. |
 
-Windows is blocked by the Workbook CLI, not by this app. At the pinned ref it
-does not compile for `windows/amd64` or `windows/arm64`: `internal/historyvalidation`
+### Why the CLI is pinned to a fork
+
+Workbook does not compile for Windows at any upstream ref: `internal/historyvalidation`
 uses `flock(2)`, `internal/syncloop` reads a uid out of `syscall.Stat_t`, and a
 POSIX-only process-group helper sits in a non-test package. Each is genuinely
 platform-specific and each needs a build-tagged Windows counterpart.
 
-The app itself is already portable — the CLI is named `workbook.exe` there, the
-install locations and scan exclusions are per-platform, and Windows gets hidden
-title-bar chrome with native overlay controls so Snap Layouts keep working.
-Re-enable the Windows row in `release.yml` once the `workbook` pin names a ref
-that builds there.
+So the pin names a fork whose branch is upstream's `main` plus that port, and
+plus a relative sync indicator for the board header. Both changes are pushed as
+their own branches (`feat/windows-support`, `feat/relative-sync-indicator`) and
+are meant to go upstream; when they land, the pin moves back to a `dgoings` tag.
+The `upstream` and `branches` keys in `package.json` record that intent so the
+fork is never mistaken for a permanent divergence.
 
 ## Known gaps
 

@@ -1,6 +1,6 @@
 {
   "name": "workbench",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "Desktop shell for Workbook: discover repositories, import them as projects, and switch between their boards in one window.",
   "main": "src/main/main.js",
@@ -85,7 +85,17 @@
           ]
         }
       ],
-      "verifyUpdateCodeSignature": false
+      "verifyUpdateCodeSignature": false,
+      "extraResources": [
+        {
+          "from": "build/workbook.exe",
+          "to": "workbook.exe"
+        },
+        {
+          "from": "build/WORKBOOK-LICENSE",
+          "to": "WORKBOOK-LICENSE"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -140,7 +150,12 @@
   },
   "homepage": "https://github.com/tylerkilgore/workbench",
   "workbook": {
-    "repository": "https://github.com/dgoings/workbook.git",
-    "ref": "v0.5.1"
+    "repository": "https://github.com/tylerkilgore/workbook.git",
+    "ref": "afb28111fede0f100590c7ea7f565e30986cb9c6",
+    "upstream": "https://github.com/dgoings/workbook.git",
+    "branches": [
+      "feat/windows-support",
+      "feat/relative-sync-indicator"
+    ]
   }
 }
