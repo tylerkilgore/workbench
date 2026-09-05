@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "stage": "./scripts/build-workbook.sh",
+    "stage": "bash scripts/build-workbook.sh",
     "gen:board-dark": "node scripts/generate-board-dark.js",
     "gen:ico": "node scripts/make-ico.js",
     "dist": "npm run stage && electron-builder --mac --arm64",
