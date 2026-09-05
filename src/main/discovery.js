@@ -10,7 +10,14 @@ const path = require('node:path')
 const SKIP_DIRECTORIES = new Set([
   'node_modules', 'vendor', 'dist', 'build', 'out', 'target',
   '.venv', 'venv', '__pycache__', '.next', '.nuxt', '.cache',
-  'Library', 'Applications', '.Trash'
+  // macOS
+  'Library', 'Applications', '.Trash',
+  // Windows: scanning these from a home directory costs minutes and finds
+  // nothing a user means to track.
+  'AppData', 'Program Files', 'Program Files (x86)', 'Windows',
+  '$Recycle.Bin', 'OneDrive', 'ProgramData',
+  // Linux
+  'snap', '.cargo', '.rustup', '.nvm'
 ])
 
 const DEFAULT_MAX_DEPTH = 4

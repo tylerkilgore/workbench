@@ -67,12 +67,25 @@
          the import action at the bottom; only the repository list scrolls, so
          neither the search nor the button is ever scrolled out of reach. -->
     <section id="view-import" class="view" hidden>
-      <header class="view-head">
-        <h1>Import repositories</h1>
-        <p class="subtitle">
-          Point Workbench at a folder. Every Git repository under it is listed;
-          choose which to bootstrap as Workbook projects.
-        </p>
+      <header class="view-head view-head--split">
+        <div class="view-head__lead">
+          <h1>Import repositories</h1>
+          <p class="subtitle">
+            Point Workbench at a folder. Every Git repository under it is listed;
+            choose which to bootstrap as Workbook projects.
+          </p>
+        </div>
+
+        <!-- The one irreversible step in the wizard, set beside the heading
+             rather than above the list: it is a caution to read once, not a
+             banner to scroll past every time. -->
+        <aside class="key-note" id="key-note" hidden>
+          <button class="key-note__dismiss" id="dismiss-key-note" type="button"
+                  aria-label="Dismiss">&times;</button>
+          A project key is minted once and <strong>cannot be changed</strong>
+          afterwards without deleting the project's refs by hand. Edit it now if
+          the suggestion is wrong.
+        </aside>
       </header>
 
       <div class="import-controls">
@@ -98,10 +111,6 @@
           <span id="result-count" class="result-count"></span>
         </div>
 
-        <p class="key-note" id="key-note" hidden>
-          A project key is minted once and <strong>cannot be changed</strong> afterwards
-          without deleting the project's refs by hand. Edit it now if the suggestion is wrong.
-        </p>
       </div>
 
       <div id="scan-results" class="scan-results view-scroll"></div>

@@ -198,7 +198,7 @@ function renderScan () {
   const visible = visibleRepositories()
 
   el('filter-bar').hidden = all.length === 0
-  el('key-note').hidden = all.length === 0
+  el('key-note').hidden = all.length === 0 || keyNoteDismissed()
   el('import-actions').hidden = all.length === 0
   el('rescan').disabled = !state.scan.root
 
@@ -363,6 +363,32 @@ async function doImport () {
   if (state.scan.root) await runScan(state.scan.root)
 }
 
+// --- the project-key caution ------------------------------------------------
+
+// Dismissal is a per-viewer convenience, so it lives in localStorage rather
+// than in the registry: it is not state anyone else needs, and losing it only
+// costs one reading of a three-line notice.
+const KEY_NOTE_STORAGE = 'workbench.keyNoteDismissed'
+
+function keyNoteDismissed () {
+  try {
+    return localStorage.getItem(KEY_NOTE_STORAGE) === 'true'
+  } catch {
+    // Storage can be unavailable or throw outright; showing the caution is the
+    // safe answer when we cannot tell.
+    return false
+  }
+}
+
+function dismissKeyNote () {
+  el('key-note').hidden = true
+  try {
+    localStorage.setItem(KEY_NOTE_STORAGE, 'true')
+  } catch {
+    // Dismissed for this session, which is the part the user asked for.
+  }
+}
+
 // --- menu ------------------------------------------------------------------
 
 function menuOpen () {
@@ -425,6 +451,7 @@ api.onThemeChanged(paintTheme)
 for (const button of document.querySelectorAll('.rail-item')) {
   button.addEventListener('click', () => setView(button.dataset.view))
 }
+el('dismiss-key-note').addEventListener('click', dismissKeyNote)
 el('pick-folder').addEventListener('click', pickFolder)
 el('rescan').addEventListener('click', () => {
   if (state.scan.root) runScan(state.scan.root)
@@ -486,6 +513,9 @@ api.onProjectExited(({ projectId }) => {
 })
 
 async function boot () {
+  // Drives the one piece of chrome that differs by platform: the space macOS
+  // needs above the sidebar for its inset traffic lights.
+  document.documentElement.classList.add(`is-${api.platform}`)
   paintTheme(await api.getTheme())
   try {
     const version = await api.version()

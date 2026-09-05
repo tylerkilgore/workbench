@@ -187,8 +187,15 @@ body {
   align-items: flex-start;
   gap: .5rem;
   /* Clears the traffic lights, which titleBarStyle 'hiddenInset' floats over
-     the top-left of this pane. */
+     the top-left of this pane. Windows draws its overlay controls at the top
+     *right*, over the main area rather than the sidebar, and Linux gets
+     ordinary decorations — neither needs the inset, and on both it would read
+     as a stray gap. The platform class is set by the renderer at boot. */
   padding: 34px 1rem .75rem;
+}
+
+:root:not(.is-mac) .sidebar-head {
+  padding-top: .85rem;
   -webkit-app-region: drag;
 }
 
@@ -470,6 +477,16 @@ body {
 
 .view-head { flex: 0 0 auto; margin-bottom: 1.25rem; }
 
+/* Heading on the left, the key caution on the right. */
+.view-head--split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.view-head__lead { min-width: 0; }
+
 h1 {
   margin: 0 0 .25rem;
   font-size: clamp(1.25rem, 2vw, 1.65rem);
@@ -605,14 +622,47 @@ h1 {
 
 /* The one irreversible step in the wizard gets the board's warning ink. */
 .key-note {
-  padding: .6rem .7rem;
+  position: relative;
+  flex: 0 1 auto;
+  width: 25rem;
+  max-width: 40%;
+  padding: .55rem 2rem .55rem .7rem;
   border: 1px solid var(--wb-warn-edge);
   border-radius: 4px;
   background: var(--wb-warn-surface);
   color: var(--wb-warn);
-  margin: 0 0 1rem;
-  max-width: 72ch;
-  font-size: .8rem;
+  margin: 0;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.key-note__dismiss {
+  position: absolute;
+  top: .25rem;
+  right: .3rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: .65;
+}
+
+.key-note__dismiss:hover { opacity: 1; background: rgba(127, 127, 127, .18); }
+
+/* Narrow windows put it back above the list rather than squeezing the title. */
+@media (max-width: 900px) {
+  .view-head--split { flex-direction: column; }
+  .key-note { width: auto; max-width: none; }
 }
 
 .scan-results { display: flex; flex-direction: column; gap: .3rem; }

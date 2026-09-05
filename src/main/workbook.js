@@ -11,17 +11,28 @@ const fs = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 
+// Windows executables carry an extension and PATH lookup does not add one, so
+// every place that names the binary has to agree on this.
+const BINARY = process.platform === 'win32' ? 'workbook.exe' : 'workbook'
+
 // Where an installed binary tends to land, searched only when the app has no
 // bundled copy of its own — which in practice means a development run.
 //
-// A packaged app launched from Finder does not inherit a shell PATH: macOS
+// A packaged app does not inherit a shell PATH: launched from Finder, macOS
 // gives it /usr/bin:/bin:/usr/sbin:/sbin. These are what would resolve a user's
 // own install if the bundled build were ever absent.
-const CANDIDATE_PATHS = [
-  path.join(os.homedir(), '.local', 'bin', 'workbook'),
-  '/opt/homebrew/bin/workbook',
-  '/usr/local/bin/workbook'
-]
+const CANDIDATE_PATHS = process.platform === 'win32'
+  ? [
+      path.join(os.homedir(), 'go', 'bin', BINARY),
+      path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'workbook', BINARY),
+      path.join(process.env.ProgramFiles ?? '', 'workbook', BINARY)
+    ].filter((candidate) => !candidate.startsWith(path.sep) || candidate.length > 1)
+  : [
+      path.join(os.homedir(), '.local', 'bin', BINARY),
+      path.join(os.homedir(), 'go', 'bin', BINARY),
+      '/opt/homebrew/bin/workbook',
+      '/usr/local/bin/workbook'
+    ]
 
 let cachedBinary = null
 
@@ -60,7 +71,7 @@ async function resolveBinary (override) {
   // Someone who wants the app to drive their own build passes an override; that
   // still wins over everything here.
   if (process.resourcesPath) {
-    const bundled = path.join(process.resourcesPath, 'workbook')
+    const bundled = path.join(process.resourcesPath, BINARY)
     if (await isExecutable(bundled)) {
       cachedBinary = bundled
       return cachedBinary
@@ -74,7 +85,7 @@ async function resolveBinary (override) {
   // shell:true, which concatenates rather than escapes its arguments.
   for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!directory) continue
-    const candidate = path.join(directory, 'workbook')
+    const candidate = path.join(directory, BINARY)
     if (await isExecutable(candidate)) {
       cachedBinary = candidate
       return cachedBinary
@@ -186,4 +197,4 @@ async function listTasks (repoPath, { binary } = {}) {
   return runJSON(repoPath, ['list'], { binary })
 }
 
-module.exports = { resolveBinary, runJSON, version, setup, listTasks }
+module.exports = { resolveBinary, runJSON, version, setup, listTasks, BINARY }

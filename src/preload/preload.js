@@ -7,6 +7,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('workbench', {
+  // 'darwin' | 'win32' | 'linux' — the renderer only uses it for chrome that
+  // genuinely differs, not for behaviour.
+  platform: process.platform === 'darwin' ? 'mac'
+    : process.platform === 'win32' ? 'windows' : 'linux',
+
   version: () => ipcRenderer.invoke('workbook:version'),
 
   listProjects: () => ipcRenderer.invoke('registry:list'),

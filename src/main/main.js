@@ -62,14 +62,31 @@ function toChrome (channel, payload) {
 }
 
 function createWindow () {
+  const dark = resolveDark()
+  const isMac = process.platform === 'darwin'
+  const isWindows = process.platform === 'win32'
+
   window = new BaseWindow({
     width: 1280,
     height: 820,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
     title: 'Workbench',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    backgroundColor: resolveDark() ? '#0f141c' : '#e9eef5'
+    // macOS keeps its inset traffic lights over the sidebar. Windows 11 hides
+    // the title bar and draws native overlay controls instead, which is what
+    // keeps Snap Layouts working; anything else loses them. Linux takes the
+    // ordinary decorations its desktop draws.
+    titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
+    ...(isWindows && {
+      titleBarOverlay: {
+        color: '#00000000',
+        symbolColor: dark ? '#e4e9f2' : '#34425a',
+        height: 36
+      }
+    }),
+    // macOS reads its icon from the bundle; the other two need to be told.
+    ...(isMac ? {} : { icon: path.join(__dirname, '..', '..', 'assets', 'icon.png') }),
+    backgroundColor: dark ? '#0f141c' : '#e9eef5'
   })
 
   chromeView = new WebContentsView({
@@ -156,6 +173,15 @@ async function applyThemeToBoard (projectId, view) {
 async function applyTheme () {
   const dark = resolveDark()
   window?.setBackgroundColor(dark ? '#0f141c' : '#e9eef5')
+  if (process.platform === 'win32' && window?.setTitleBarOverlay) {
+    // Native overlay controls are painted by Windows, not by the page, so they
+    // do not follow the stylesheet and have to be repainted by hand.
+    window.setTitleBarOverlay({
+      color: '#00000000',
+      symbolColor: dark ? '#e4e9f2' : '#34425a',
+      height: 36
+    })
+  }
   toChrome('theme:changed', { theme: registry.theme, dark })
   await Promise.all(
     [...boardViews].map(([projectId, view]) => applyThemeToBoard(projectId, view))
@@ -421,6 +447,20 @@ supervisor.on('exited', ({ projectId, wasRunning }) => {
 nativeTheme.on('updated', () => {
   if (registry.theme === 'system') applyTheme()
 })
+
+// A second copy would start a second server per project and both would write
+// the same refs. Git's compare-and-swap keeps that safe, but it is still two of
+// everything for no benefit.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
+    }
+  })
+}
 
 app.whenReady().then(async () => {
   await registry.load()
