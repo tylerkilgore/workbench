@@ -71,8 +71,14 @@ jobs:
 
       - name: Board overlay matches its source
         run: |
-          git clone --quiet --depth 1 --branch "$(node -p 'require("./package.json").workbook.ref')" \
-            "$(node -p 'require("./package.json").workbook.repository')" /tmp/workbook
+          # `clone --branch` takes a branch or a tag, never a commit, and the
+          # pin may be any of the three. Clone, then resolve the ref the same
+          # way scripts/build-workbook.sh does.
+          ref=$(node -p 'require("./package.json").workbook.ref')
+          git clone --quiet "$(node -p 'require("./package.json").workbook.repository')" /tmp/workbook
+          git -C /tmp/workbook fetch --quiet --tags origin || true
+          git -C /tmp/workbook fetch --quiet origin "$ref" 2>/dev/null || true
+          git -C /tmp/workbook checkout --quiet --detach "$ref"
           WORKBOOK_REPO=/tmp/workbook node scripts/generate-board-dark.js
           if ! git diff --quiet -- src/renderer/board-dark.css; then
             echo "board-dark.css is stale. Run: npm run gen:board-dark"
