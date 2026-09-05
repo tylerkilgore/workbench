@@ -62,39 +62,47 @@
         <h1>Tasks</h1>
         <p class="subtitle">Open tasks across every imported project, ranked by priority.</p>
       </header>
-      <div class="filter-bar">
-        <input id="queue-search" class="search" type="search" autocomplete="off"
-               placeholder="Search tasks, projects, labels or assignees…"
-               aria-label="Search tasks">
-        <div class="chips" role="group" aria-label="Filter tasks">
-          <button class="chip active" data-queue-filter="all" type="button">All</button>
-          <button class="chip" data-queue-filter="mine" type="button">Mine</button>
-          <button class="chip" data-queue-filter="unassigned" type="button">Unassigned</button>
-          <button class="chip" data-queue-filter="ready" type="button">Ready</button>
-          <button class="chip" data-queue-filter="blocked" type="button">Blocked</button>
-        </div>
+      <div class="table-bar">
         <span id="queue-count" class="result-count"></span>
+        <button id="queue-clear-filters" class="ghost inline" type="button" hidden>Clear filters</button>
       </div>
 
-      <div class="filter-bar filter-bar--second">
-        <label class="select-label">
-          Project
-          <select id="queue-project" aria-label="Filter by project">
-            <option value="">All projects</option>
-          </select>
-        </label>
-        <label class="select-label">
-          Sort
-          <select id="queue-sort" aria-label="Sort tasks">
-            <option value="priority">Priority</option>
-            <option value="updated">Recently updated</option>
-            <option value="project">Project</option>
-            <option value="title">Title</option>
-          </select>
-        </label>
-      </div>
       <div id="queue-failures" class="failures" hidden></div>
-      <div id="queue-body" class="queue view-scroll"></div>
+
+      <!-- A real table: the columns are the filters and the sort, so there is
+           one place to narrow a list rather than a bar above it that has to
+           name every column in prose. -->
+      <div class="table-scroll view-scroll">
+        <table class="task-table" id="task-table">
+          <thead>
+            <tr class="task-table__headers">
+              <th data-sort="priority" class="col-priority"><button type="button">Priority</button></th>
+              <th data-sort="title" class="col-title"><button type="button">Task</button></th>
+              <th data-sort="assignee" class="col-assignee"><button type="button">Assignee</button></th>
+              <th data-sort="deps" class="col-deps"><button type="button">Depends</button></th>
+              <th data-sort="status" class="col-status"><button type="button">Status</button></th>
+              <th data-sort="project" class="col-project"><button type="button">Project</button></th>
+              <th data-sort="updated" class="col-updated"><button type="button">Updated</button></th>
+            </tr>
+            <tr class="task-table__filters">
+              <th><select id="f-priority" aria-label="Filter by priority"><option value="">Any</option></select></th>
+              <th><input id="f-title" type="search" placeholder="Search…" aria-label="Filter by task or label"></th>
+              <th><select id="f-assignee" aria-label="Filter by assignee"><option value="">Any</option></select></th>
+              <th><select id="f-deps" aria-label="Filter by dependencies">
+                <option value="">Any</option>
+                <option value="blocked">Blocked</option>
+                <option value="ready">Ready</option>
+                <option value="blocking">Blocks others</option>
+                <option value="independent">No dependencies</option>
+              </select></th>
+              <th><select id="f-status" aria-label="Filter by status"><option value="">Any</option></select></th>
+              <th><select id="f-project" aria-label="Filter by project"><option value="">Any</option></select></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="queue-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- The discovery + selection wizard. Controls are anchored at the top and

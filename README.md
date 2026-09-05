@@ -251,6 +251,14 @@ back does not reload them. That is deliberate — a reload loses scroll position
 and any open task form — but it means memory grows with the number of boards
 opened in a session, not the number of projects imported.
 
+Closing the window quits the app, on macOS too. The platform convention is to
+stay running, and that is right for a document app you would open another window
+from; this is a single-window utility that also supervises a server process per
+open board, so staying alive with no window leaves those running with nothing on
+screen to stop them. Board servers are recorded in `running-boards.json` and any
+left by a run that ended without warning — a crash, a Force Quit — are stopped
+at the next start, since no in-process handler can cover a SIGKILL.
+
 ## Known gaps
 
 - The bundled binary is built at package time and does not update afterwards.

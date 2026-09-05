@@ -542,6 +542,138 @@ h1 {
   white-space: nowrap;
 }
 
+/* --- the task table ----------------------------------------------------- */
+
+.table-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: .5rem;
+}
+
+/* The scroll container, so the header can stick to the top of it. */
+.table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--wb-rule);
+  border-radius: 4px;
+  background: var(--wb-surface);
+}
+
+.task-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .84rem;
+}
+
+.task-table thead th {
+  position: sticky;
+  background: var(--wb-surface-2);
+  text-align: left;
+  font-weight: 700;
+  z-index: 1;
+}
+
+.task-table__headers th { top: 0; border-bottom: 1px solid var(--wb-rule); }
+
+/* The filter row sits directly beneath the header row and sticks with it. */
+.task-table__filters th {
+  top: 2.05rem;
+  padding: .25rem .4rem;
+  border-bottom: 1px solid var(--wb-rule);
+}
+
+.task-table__headers th button {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  width: 100%;
+  padding: .45rem .55rem;
+  border: 0;
+  background: transparent;
+  color: var(--wb-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: .74rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.task-table__headers th button:hover { color: var(--wb-primary); }
+.task-table__headers th[aria-sort] button { color: var(--wb-primary); }
+
+/* The arrow is drawn from the sort state, so a header cannot claim an order
+   the table is not in. */
+.task-table__headers th[aria-sort="ascending"] button::after { content: "▲"; font-size: .6em; }
+.task-table__headers th[aria-sort="descending"] button::after { content: "▼"; font-size: .6em; }
+
+.task-table__filters select,
+.task-table__filters input {
+  width: 100%;
+  min-width: 0;
+  padding: .25rem .35rem;
+  border: 1px solid var(--wb-control);
+  border-radius: 4px;
+  background: var(--wb-surface);
+  color: var(--wb-text);
+  font: inherit;
+  font-size: .74rem;
+}
+
+.task-table tbody td {
+  padding: .45rem .55rem;
+  border-bottom: 1px solid var(--wb-divider);
+  vertical-align: middle;
+}
+
+.task-table tbody tr { cursor: pointer; }
+.task-table tbody tr:hover td { background: var(--wb-primary-tint-4); }
+.task-table tbody tr:last-child td { border-bottom: 0; }
+
+.col-priority { width: 6.5rem; }
+.col-assignee { width: 11rem; }
+.col-deps { width: 9rem; }
+.col-status { width: 7.5rem; }
+.col-project { width: 11rem; }
+.col-updated { width: 6.5rem; }
+
+.cell-title { color: var(--wb-text); }
+
+.cell-labels {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: .2rem;
+  margin-left: .4rem;
+}
+
+.cell-muted {
+  color: var(--wb-muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .7rem;
+}
+
+/* What a task waits on, and what waits on it. Amber for blocked because it is
+   an ordinary state for queued work; primary for blocking because it is a
+   reason to pick something up, not a warning. */
+.blocks-chip {
+  padding: .1rem .3rem;
+  border: 1px solid var(--wb-primary-muted, var(--wb-hairline));
+  border-radius: 3px;
+  background: var(--wb-primary-tint-1);
+  color: var(--wb-primary);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .64rem;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.dep-cell { display: flex; flex-wrap: wrap; gap: .25rem; }
+
 /* --- import ------------------------------------------------------------- */
 
 .import-controls { flex: 0 0 auto; }

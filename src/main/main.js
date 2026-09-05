@@ -36,7 +36,7 @@ const BOARD_DARK_CSS = fs.readFileSync(
 const boardDarkKeys = new Map()
 
 const registry = new Registry(app.getPath('userData'))
-const supervisor = new Supervisor()
+const supervisor = new Supervisor(app.getPath('userData'))
 
 /** @type {{check: (options?: {silent?: boolean}) => Promise<object>}|null} */
 let updater = null
@@ -422,6 +422,18 @@ ipcMain.handle('queue:load', async () => {
     // the queue itself — they are context for what blocks, not work to show.
     const byId = new Map(entry.tasks.map((task) => [task.id, task]))
 
+    // And the reverse: who is waiting on each task. A task's own dependencies
+    // say why it cannot start; this says what starts when it finishes, which is
+    // the half that decides what to pick up first.
+    const blocking = new Map()
+    for (const task of entry.tasks) {
+      if (task.deleted) continue
+      for (const dependencyId of task.dependencies ?? []) {
+        if (!blocking.has(dependencyId)) blocking.set(dependencyId, [])
+        blocking.get(dependencyId).push({ id: task.id, title: task.title, status: task.status })
+      }
+    }
+
     for (const task of entry.tasks) {
       if (task.status === 'done' || task.deleted) continue
 
@@ -455,6 +467,8 @@ ipcMain.handle('queue:load', async () => {
         dependencies: (task.dependencies ?? []).length,
         blockedBy,
         blocked: blockedBy.length > 0,
+        // Only the unfinished waiters count: a done task is not waiting.
+        blocks: (blocking.get(task.id) ?? []).filter((waiter) => waiter.status !== 'done'),
         // Workbook records an assignment as an email address; the principal is
         // the person it names, the creator the person who recorded it.
         assignees: (task.assignments ?? []).map((assignment) => assignment.principal),
@@ -650,6 +664,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
+  // Before anything else starts a server: clear out any left by a run that did
+  // not get to shut down.
+  const reaped = supervisor.reapOrphans()
+  if (reaped.length > 0) {
+    console.log(`workbench: stopped ${reaped.length} board server(s) left by a previous run`)
+  }
+
   await registry.load()
 
   // Seed the default assignee from git's own identity. `--assign self` already
@@ -675,9 +696,16 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+// Quit with the window, on macOS too.
+//
+// The platform convention is for an app to stay running when its last window
+// closes, and that is right for a document app you will open another window
+// from. This is a single-window utility that also supervises a server process
+// per open board: staying alive with no window leaves those running with
+// nothing on screen to stop them, which reads as an app that will not close and
+// invites a Force Quit — and Force Quit is SIGKILL, so the cleanup never runs
+// and the servers are orphaned onto their ports.
+app.on('window-all-closed', () => app.quit())
 
 // Child servers hold listeners; leaking them would leave ports bound after the
 // app is gone.

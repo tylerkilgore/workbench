@@ -11,10 +11,8 @@ const state = {
   // they survive a rescan, so refining a search does not lose the filter.
   query: '',
   filter: 'all',
-  queueQuery: '',
-  queueFilter: 'all',
-  queueProject: '',
   queueSort: 'priority',
+  queueSortDesc: false,
   tasks: [],
   people: [],
   myEmails: [],
@@ -112,13 +110,13 @@ async function openProject (projectId) {
 
 async function loadQueue () {
   const body = el('queue-body')
-  const failures = el('queue-failures')
-  body.innerHTML = '<div class="empty">Loading…</div>'
+  body.innerHTML = '<tr><td colspan="7" class="empty">Loading…</td></tr>'
 
   const { tasks, failures: problems, myEmails } = await api.loadQueue()
   state.tasks = tasks
   state.myEmails = myEmails ?? []
 
+  const failures = el('queue-failures')
   if (problems.length > 0) {
     failures.hidden = false
     failures.textContent = problems
@@ -128,76 +126,134 @@ async function loadQueue () {
     failures.hidden = true
   }
 
-  renderProjectFilter()
+  populateFilters()
   renderQueue()
+}
+
+/**
+ * Fill each column's filter from the data actually present.
+ *
+ * Offering a status or a project the list does not contain invites a filter
+ * that returns nothing and explains nothing.
+ */
+function populateFilters () {
+  const fill = (id, values, label) => {
+    const select = el(id)
+    const chosen = select.value
+    select.innerHTML = ''
+    const any = document.createElement('option')
+    any.value = ''
+    any.textContent = 'Any'
+    select.append(any)
+    for (const [value, count] of values) {
+      const option = document.createElement('option')
+      option.value = value
+      option.textContent = `${label(value)} (${count})`
+      select.append(option)
+    }
+    // A selection that no longer matches anything is dropped rather than left
+    // filtering the list down to nothing with no visible cause.
+    select.value = values.some(([value]) => value === chosen) ? chosen : ''
+  }
+
+  const tally = (pick) => {
+    const counts = new Map()
+    for (const task of state.tasks) {
+      for (const value of [pick(task)].flat()) {
+        if (value === undefined || value === null) continue
+        counts.set(value, (counts.get(value) ?? 0) + 1)
+      }
+    }
+    return [...counts.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+  }
+
+  fill('f-priority', tally((task) => task.priority), (value) => value)
+  fill('f-status', tally((task) => task.status), (value) => value)
+  fill('f-project', tally((task) => task.projectId),
+    (id) => state.tasks.find((task) => task.projectId === id)?.projectKey ?? id)
+
+  const assignees = tally((task) =>
+    (task.assignees ?? []).length === 0 ? '\u0000unassigned' : task.assignees)
+  fill('f-assignee', assignees,
+    (value) => value === '\u0000unassigned' ? 'Unassigned' : assigneeLabel(value))
 }
 
 function matchesTaskQuery (task, query) {
   if (!query) return true
-  const haystack = [
-    task.title, task.projectName, task.projectKey, task.status, task.priority,
-    ...(task.labels ?? []), ...(task.assignees ?? [])
-  ].filter(Boolean).join(' ').toLowerCase()
+  const haystack = [task.title, ...(task.labels ?? [])].filter(Boolean).join(' ').toLowerCase()
   return query.toLowerCase().split(/\s+/).filter(Boolean)
     .every((term) => haystack.includes(term))
 }
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }
 
-function visibleTasks () {
-  const filtered = state.tasks.filter((task) => {
-    if (state.queueFilter === 'mine' && !task.mine) return false
-    if (state.queueFilter === 'unassigned' && (task.assignees ?? []).length > 0) return false
-    if (state.queueFilter === 'ready' && task.blocked) return false
-    if (state.queueFilter === 'blocked' && !task.blocked) return false
-    if (state.queueProject && task.projectId !== state.queueProject) return false
-    return matchesTaskQuery(task, state.queueQuery)
-  })
-
-  // Sorted here rather than in the main process: the order is a view choice,
-  // and re-sorting a list already in hand should not cost a round trip.
-  const byPriority = (a, b) =>
-    (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3)
-  const byUpdated = (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))
-
-  const comparators = {
-    priority: (a, b) => byPriority(a, b) || byUpdated(a, b),
-    updated: byUpdated,
-    project: (a, b) =>
-      a.projectKey.localeCompare(b.projectKey) || byPriority(a, b) || byUpdated(a, b),
-    title: (a, b) => a.title.localeCompare(b.title)
+function activeFilters () {
+  return {
+    priority: el('f-priority').value,
+    title: el('f-title').value.trim(),
+    assignee: el('f-assignee').value,
+    deps: el('f-deps').value,
+    status: el('f-status').value,
+    project: el('f-project').value
   }
-  return filtered.sort(comparators[state.queueSort] ?? comparators.priority)
 }
 
-/** Keep the project menu in step with what is actually imported. */
-function renderProjectFilter () {
-  const select = el('queue-project')
-  const chosen = state.queueProject
-  const seen = new Map()
-  for (const task of state.tasks) {
-    if (!seen.has(task.projectId)) seen.set(task.projectId, task)
-  }
-  select.innerHTML = ''
-  const all = document.createElement('option')
-  all.value = ''
-  all.textContent = `All projects (${seen.size})`
-  select.append(all)
-  for (const [id, task] of [...seen].sort((a, b) => a[1].projectKey.localeCompare(b[1].projectKey))) {
-    const option = document.createElement('option')
-    option.value = id
-    const count = state.tasks.filter((candidate) => candidate.projectId === id).length
-    option.textContent = `${task.projectKey} · ${task.projectName} (${count})`
-    select.append(option)
-  }
-  // A project filtered to nothing must not silently persist as a dead value.
-  select.value = seen.has(chosen) ? chosen : ''
-  state.queueProject = select.value
+function visibleTasks () {
+  const filters = activeFilters()
+
+  const filtered = state.tasks.filter((task) => {
+    if (filters.priority && task.priority !== filters.priority) return false
+    if (filters.status && task.status !== filters.status) return false
+    if (filters.project && task.projectId !== filters.project) return false
+
+    if (filters.assignee === '\u0000unassigned') {
+      if ((task.assignees ?? []).length > 0) return false
+    } else if (filters.assignee && !(task.assignees ?? []).includes(filters.assignee)) {
+      return false
+    }
+
+    if (filters.deps === 'blocked' && !task.blocked) return false
+    if (filters.deps === 'ready' && task.blocked) return false
+    if (filters.deps === 'blocking' && (task.blocks ?? []).length === 0) return false
+    if (filters.deps === 'independent' &&
+        (task.blocked || (task.blocks ?? []).length > 0)) return false
+
+    return matchesTaskQuery(task, filters.title)
+  })
+
+  const key = {
+    priority: (task) => PRIORITY_ORDER[task.priority] ?? 3,
+    title: (task) => task.title.toLowerCase(),
+    assignee: (task) => (task.assignees ?? []).map(assigneeLabel).sort()[0] ?? '\uffff',
+    // Ordered by consequence: what most other work waits on comes first.
+    deps: (task) => -((task.blocks ?? []).length * 10 - (task.blockedBy ?? []).length),
+    status: (task) => task.status,
+    project: (task) => task.projectKey,
+    updated: (task) => String(task.updatedAt)
+  }[state.queueSort] ?? ((task) => PRIORITY_ORDER[task.priority] ?? 3)
+
+  const direction = state.queueSortDesc ? -1 : 1
+  return filtered.sort((a, b) => {
+    const left = key(a)
+    const right = key(b)
+    if (left < right) return -1 * direction
+    if (left > right) return 1 * direction
+    // A stable secondary order, so equal keys do not shuffle between renders.
+    return String(b.updatedAt).localeCompare(String(a.updatedAt))
+  })
+}
+
+function chipFor (text, className, title) {
+  const node = document.createElement('span')
+  node.className = className
+  node.textContent = text
+  if (title) node.title = title
+  return node
 }
 
 /** The name to show for an assignee, falling back to the address itself. */
 function assigneeLabel (email) {
-  const person = state.people.find((candidate) => candidate.emails.includes(email.toLowerCase()))
+  const person = state.people.find((candidate) => candidate.emails.includes(String(email).toLowerCase()))
   return person ? person.displayName : email
 }
 
@@ -209,86 +265,116 @@ function renderQueue () {
   const visible = visibleTasks()
   el('queue-count').textContent = state.tasks.length === 0
     ? ''
-    : `${visible.length}/${state.tasks.length}`
+    : `${visible.length} of ${state.tasks.length} tasks`
 
-  if (state.tasks.length === 0) {
-    body.innerHTML = '<div class="empty">No open tasks. Import a repository to get started.</div>'
-    return
+  const filters = activeFilters()
+  el('queue-clear-filters').hidden = !Object.values(filters).some(Boolean)
+
+  // The header arrows are drawn from the sort state rather than set by the
+  // click handler, so they cannot claim an order the table is not in.
+  for (const header of document.querySelectorAll('.task-table__headers th')) {
+    if (header.dataset.sort === state.queueSort) {
+      header.setAttribute('aria-sort', state.queueSortDesc ? 'descending' : 'ascending')
+    } else {
+      header.removeAttribute('aria-sort')
+    }
   }
+
   if (visible.length === 0) {
-    body.innerHTML = '<div class="empty">Nothing matches that filter.</div>'
+    const row = document.createElement('tr')
+    const cell = document.createElement('td')
+    cell.colSpan = 7
+    cell.className = 'empty'
+    cell.textContent = state.tasks.length === 0
+      ? 'No open tasks. Import a repository to get started.'
+      : 'Nothing matches these filters.'
+    row.append(cell)
+    body.append(row)
     return
   }
 
   for (const task of visible) {
-    const row = document.createElement('div')
-    row.className = 'task'
-
-    const priority = document.createElement('span')
-    priority.className = `priority priority--${task.priority}`
-    priority.textContent = task.priority
-
-    const title = document.createElement('span')
-    title.className = 'task-title'
-    title.textContent = task.title
-
-    const assignees = document.createElement('span')
-    assignees.className = 'task-assignees'
-    assignees.setAttribute('role', 'button')
-    assignees.tabIndex = 0
-    assignees.title = 'Change who this is assigned to'
-    for (const email of task.assignees ?? []) {
-      const chip = document.createElement('span')
-      chip.className = 'assignee' + (state.myEmails.includes(email.toLowerCase()) ? ' assignee--me' : '')
-      chip.textContent = assigneeLabel(email)
-      chip.title = email
-      assignees.append(chip)
-    }
-    if ((task.assignees ?? []).length === 0) {
-      const add = document.createElement('span')
-      add.className = 'assign-add'
-      add.textContent = 'assign'
-      assignees.append(add)
-    }
-    // The row opens the project; the cell opens the picker. Without this the
-    // picker would be a board switch.
-    const openPicker = (event) => {
-      event.stopPropagation()
-      showAssignMenu(task, assignees)
-    }
-    assignees.addEventListener('click', openPicker)
-    assignees.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') openPicker(event)
-    })
-
-    const blocked = document.createElement('span')
-    if (task.blocked) {
-      const chip = document.createElement('span')
-      chip.className = 'blocked-chip'
-      chip.textContent = `blocked ×${task.blockedBy.length}`
-      // The titles, not just the count: "blocked" is only useful if you can
-      // see what by without opening the board.
-      chip.title = 'Waiting on:\n' + task.blockedBy
-        .map((dependency) => dependency.title
-          ? `  ${dependency.title} (${dependency.status})`
-          : `  ${dependency.id} (not in this project)`)
-        .join('\n')
-      blocked.append(chip)
-    }
-
-    const status = document.createElement('span')
-    status.className = 'label'
-    status.textContent = task.status
-
-    const project = document.createElement('span')
-    project.className = 'task-meta'
-    project.textContent = `${task.projectKey} · ${task.projectName}`
-
-    row.append(priority, title, assignees, blocked, status, project)
+    const row = document.createElement('tr')
     row.title = task.id
     row.addEventListener('click', () => openProject(task.projectId))
+
+    const priority = document.createElement('td')
+    priority.append(chipFor(task.priority, `priority priority--${task.priority}`))
+
+    const title = document.createElement('td')
+    const titleText = document.createElement('span')
+    titleText.className = 'cell-title'
+    titleText.textContent = task.title
+    title.append(titleText)
+    if ((task.labels ?? []).length > 0) {
+      const labels = document.createElement('span')
+      labels.className = 'cell-labels'
+      for (const label of task.labels) labels.append(chipFor(label, 'label'))
+      title.append(labels)
+    }
+
+    const assignees = document.createElement('td')
+    const holder = document.createElement('span')
+    holder.className = 'task-assignees'
+    holder.setAttribute('role', 'button')
+    holder.tabIndex = 0
+    holder.title = 'Change who this is assigned to'
+    for (const email of task.assignees ?? []) {
+      holder.append(chipFor(assigneeLabel(email),
+        'assignee' + (state.myEmails.includes(String(email).toLowerCase()) ? ' assignee--me' : ''),
+        email))
+    }
+    if ((task.assignees ?? []).length === 0) {
+      holder.append(chipFor('assign', 'assign-add'))
+    }
+    const openPicker = (event) => { event.stopPropagation(); showAssignMenu(task, holder) }
+    holder.addEventListener('click', openPicker)
+    holder.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') openPicker(event)
+    })
+    assignees.append(holder)
+
+    // Both directions: what holds this up, and what it holds up.
+    const deps = document.createElement('td')
+    const depCell = document.createElement('div')
+    depCell.className = 'dep-cell'
+    if (task.blocked) {
+      depCell.append(chipFor(`blocked ×${task.blockedBy.length}`, 'blocked-chip',
+        'Waiting on:\n' + task.blockedBy
+          .map((d) => d.title ? `  ${d.title} (${d.status})` : `  ${d.id} (not in this project)`)
+          .join('\n')))
+    }
+    if ((task.blocks ?? []).length > 0) {
+      depCell.append(chipFor(`blocks ×${task.blocks.length}`, 'blocks-chip',
+        'Blocking:\n' + task.blocks.map((d) => `  ${d.title} (${d.status})`).join('\n')))
+    }
+    if (depCell.childElementCount === 0) depCell.append(chipFor('—', 'cell-muted'))
+    deps.append(depCell)
+
+    const status = document.createElement('td')
+    status.append(chipFor(task.status, 'label'))
+
+    const project = document.createElement('td')
+    project.append(chipFor(`${task.projectKey} · ${task.projectName}`, 'cell-muted'))
+
+    const updated = document.createElement('td')
+    updated.append(chipFor(relativeDate(task.updatedAt), 'cell-muted', task.updatedAt))
+
+    row.append(priority, title, assignees, deps, status, project, updated)
     body.append(row)
   }
+}
+
+/** Short relative age, matching how the repository rows read. */
+function relativeDate (iso) {
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return ''
+  const days = Math.floor((Date.now() - then.getTime()) / 86400000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days}d ago`
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`
+  return `${Math.floor(days / 365)}y ago`
 }
 
 // --- assigning --------------------------------------------------------------
@@ -857,30 +943,28 @@ api.onThemeChanged(paintTheme)
 for (const button of document.querySelectorAll('.rail-item')) {
   button.addEventListener('click', () => setView(button.dataset.view))
 }
-el('queue-search').addEventListener('input', () => {
-  state.queueQuery = el('queue-search').value.trim()
-  renderQueue()
-})
-
-el('queue-project').addEventListener('change', () => {
-  state.queueProject = el('queue-project').value
-  renderQueue()
-})
-
-el('queue-sort').addEventListener('change', () => {
-  state.queueSort = el('queue-sort').value
-  renderQueue()
-})
-
-for (const button of document.querySelectorAll('[data-queue-filter]')) {
-  button.addEventListener('click', () => {
-    state.queueFilter = button.dataset.queueFilter
-    for (const other of document.querySelectorAll('[data-queue-filter]')) {
-      other.classList.toggle('active', other === button)
-    }
+// Column headers sort; clicking the active column reverses it.
+for (const header of document.querySelectorAll('.task-table__headers th[data-sort]')) {
+  header.querySelector('button').addEventListener('click', () => {
+    const column = header.dataset.sort
+    if (state.queueSort === column) state.queueSortDesc = !state.queueSortDesc
+    else { state.queueSort = column; state.queueSortDesc = false }
     renderQueue()
   })
 }
+
+for (const id of ['f-priority', 'f-assignee', 'f-deps', 'f-status', 'f-project']) {
+  el(id).addEventListener('change', renderQueue)
+}
+el('f-title').addEventListener('input', renderQueue)
+
+el('queue-clear-filters').addEventListener('click', () => {
+  for (const id of ['f-priority', 'f-assignee', 'f-deps', 'f-status', 'f-project']) {
+    el(id).value = ''
+  }
+  el('f-title').value = ''
+  renderQueue()
+})
 
 el('dismiss-key-note').addEventListener('click', dismissKeyNote)
 el('pick-folder').addEventListener('click', pickFolder)

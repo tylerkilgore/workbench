@@ -1,6 +1,6 @@
 {
   "name": "workbench",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": false,
   "description": "Desktop shell for Workbook: discover repositories, import them as projects, and switch between their boards in one window.",
   "main": "src/main/main.js",
