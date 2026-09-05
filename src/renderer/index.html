@@ -21,10 +21,13 @@
           <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor"
                 stroke-width="1.6" stroke-linecap="round"/>
         </svg>
+        <!-- A quiet announcement still has to be noticeable. -->
+        <span id="update-dot" class="update-dot" hidden title="An update is available"></span>
       </button>
 
       <div id="menu" class="menu" role="menu" hidden>
         <button class="menu-item" role="menuitem" id="refresh" type="button">Refresh</button>
+        <button class="menu-item menu-item--update" role="menuitem" id="install-update" type="button" hidden></button>
         <button class="menu-item" role="menuitem" id="check-updates" type="button">Check for updates…</button>
         <div class="menu-separator" role="separator"></div>
         <div class="menu-label" id="appearance-label">Appearance</div>

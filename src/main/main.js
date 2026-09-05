@@ -368,6 +368,11 @@ ipcMain.handle('update:check', async () => {
   return updater.check({ silent: false })
 })
 
+ipcMain.handle('update:install', async () => {
+  if (!updater) return { skipped: 'not ready' }
+  return updater.install()
+})
+
 ipcMain.handle('theme:get', async () => ({ theme: registry.theme, dark: resolveDark() }))
 
 ipcMain.handle('theme:set', async (_event, { theme }) => {
@@ -690,22 +695,21 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
-  updater = setupUpdater()
+  updater = setupUpdater({
+    // A quiet announcement: the interface decides how to show it, and nothing
+    // is put in front of the user until they act on it.
+    onAvailable: ({ version }) => toChrome('update:available', { version })
+  })
   app.on('activate', () => {
     if (BaseWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-// Quit with the window, on macOS too.
-//
-// The platform convention is for an app to stay running when its last window
-// closes, and that is right for a document app you will open another window
-// from. This is a single-window utility that also supervises a server process
-// per open board: staying alive with no window leaves those running with
-// nothing on screen to stop them, which reads as an app that will not close and
-// invites a Force Quit — and Force Quit is SIGKILL, so the cleanup never runs
-// and the servers are orphaned onto their ports.
-app.on('window-all-closed', () => app.quit())
+// The platform convention: closing the last window does not quit on macOS, and
+// the dock icon brings it back. Quit is how you quit.
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
 
 // Child servers hold listeners; leaking them would leave ports bound after the
 // app is gone.

@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('workbench', {
   renamePerson: (id, displayName) => ipcRenderer.invoke('people:rename', { id, displayName }),
 
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
 
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', { theme }),
@@ -51,6 +52,11 @@ contextBridge.exposeInMainWorld('workbench', {
     const listener = (_event, payload) => handler(payload)
     ipcRenderer.on('discovery:progress', listener)
     return () => ipcRenderer.removeListener('discovery:progress', listener)
+  },
+  onUpdateAvailable: (handler) => {
+    const listener = (_event, payload) => handler(payload)
+    ipcRenderer.on('update:available', listener)
+    return () => ipcRenderer.removeListener('update:available', listener)
   },
   onThemeChanged: (handler) => {
     const listener = (_event, payload) => handler(payload)

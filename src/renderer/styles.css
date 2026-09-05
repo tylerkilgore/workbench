@@ -217,6 +217,7 @@ body {
 }
 
 .icon-button {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -232,6 +233,20 @@ body {
 }
 
 .icon-button:hover { background: var(--wb-primary-tint-1); color: var(--wb-primary); }
+
+/* The update marker: present enough to notice, quiet enough to ignore — which
+   is the whole point of not making it a dialog. */
+.update-dot {
+  position: absolute;
+  top: .25rem;
+  right: .25rem;
+  width: .4rem;
+  height: .4rem;
+  border-radius: 50%;
+  background: var(--wb-primary);
+}
+
+.menu-item--update { color: var(--wb-primary); font-weight: 800; }
 
 .icon-button[aria-expanded="true"] {
   border-color: var(--wb-hairline);

@@ -92,7 +92,12 @@ itself and opens it in Finder for a drag into Applications, which is what the
 user did to install in the first place. The same approach plus2win uses, for the
 same reason.
 
-Checks run once on launch, and on demand from the menu.
+Checks run once on launch, and on demand from the menu — but the launch check
+never opens a dialog. A native dialog is application-modal: while one is open
+the app cannot quit and Cmd+Q does nothing, so an update prompt six seconds
+after launch, landing behind the window or on another Space, makes the app look
+hung. The automatic check marks the menu instead; dialogs are shown only in
+answer to something the user asked for.
 
 The app is unsigned by any identity and unnotarized, so it is for local use.
 Gatekeeper will need it opened once from the Finder context menu.
@@ -251,13 +256,9 @@ back does not reload them. That is deliberate — a reload loses scroll position
 and any open task form — but it means memory grows with the number of boards
 opened in a session, not the number of projects imported.
 
-Closing the window quits the app, on macOS too. The platform convention is to
-stay running, and that is right for a document app you would open another window
-from; this is a single-window utility that also supervises a server process per
-open board, so staying alive with no window leaves those running with nothing on
-screen to stop them. Board servers are recorded in `running-boards.json` and any
-left by a run that ended without warning — a crash, a Force Quit — are stopped
-at the next start, since no in-process handler can cover a SIGKILL.
+Board servers are recorded in `running-boards.json` and any left by a run that
+ended without warning — a crash, a Force Quit — are stopped at the next start,
+since no in-process handler can cover a SIGKILL.
 
 ## Known gaps
 

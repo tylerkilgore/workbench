@@ -32,6 +32,10 @@ const useManualMacFlow = process.platform === 'darwin'
 
 let checking = false
 
+// Whether the check in flight was started by the app rather than by the user.
+// It decides whether an available update is announced quietly or asked about.
+let backgroundCheck = true
+
 function log (message) {
   console.log(`[updater] ${message}`)
 }
@@ -83,7 +87,8 @@ async function downloadAndOpenMacDmg (version, onProgress) {
 }
 
 /**
- * @param {{ onProgress?: (fraction: number) => void }} [hooks]
+ * @param {{ onProgress?: (fraction: number) => void,
+ *           onAvailable?: (info: {version: string}) => void }} [hooks]
  */
 function setupUpdater (hooks = {}) {
   // Nothing to update: a development run is not installed from a release, and
@@ -91,7 +96,10 @@ function setupUpdater (hooks = {}) {
   // already in the working tree.
   if (!app.isPackaged) {
     log('development run — update checks disabled')
-    return { check: async () => ({ skipped: 'development build' }) }
+    return {
+      check: async () => ({ skipped: 'development build' }),
+      install: async () => ({ skipped: 'development build' })
+    }
   }
 
   autoUpdater.autoDownload = false
@@ -99,6 +107,19 @@ function setupUpdater (hooks = {}) {
   autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} }
 
   autoUpdater.on('update-available', async (info) => {
+    // A check nobody asked for must not put a modal on screen.
+    //
+    // A native dialog is application-modal: while one is open the app cannot
+    // quit, and Cmd+Q does nothing at all. An update prompt six seconds after
+    // launch can easily land behind the window or on another Space, and the
+    // result is an app that appears to have hung — which is exactly what it
+    // did. The automatic check hands the news to the interface instead, and a
+    // dialog is only ever shown to somebody who asked a question.
+    if (backgroundCheck) {
+      hooks.onAvailable?.({ version: info.version })
+      return
+    }
+
     if (useManualMacFlow) {
       const { response } = await dialog.showMessageBox({
         type: 'info',
@@ -175,6 +196,7 @@ function setupUpdater (hooks = {}) {
   async function check ({ silent = true } = {}) {
     if (checking) return { skipped: 'already checking' }
     checking = true
+    backgroundCheck = silent
     try {
       const result = await autoUpdater.checkForUpdates()
       const available = Boolean(result?.updateInfo &&
@@ -205,8 +227,52 @@ function setupUpdater (hooks = {}) {
     }
   }
 
+  /**
+   * Download and install the update the user has now asked for.
+   *
+   * Separate from the check because the announcement is quiet: this is what the
+   * interface calls once somebody has decided to act on it, and from here a
+   * dialog is warranted because it is answering their question.
+   */
+  async function install () {
+    backgroundCheck = false
+    const result = await autoUpdater.checkForUpdates()
+    const version = result?.updateInfo?.version
+    if (!version || version === app.getVersion()) return { upToDate: true }
+
+    if (useManualMacFlow) {
+      try {
+        await downloadAndOpenMacDmg(version, hooks.onProgress)
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'Update ready',
+          message: 'The installer is open in Finder.',
+          detail: 'Drag Workbench into Applications to replace this copy, then relaunch it.',
+          buttons: ['OK']
+        })
+        return { downloaded: true }
+      } catch (error) {
+        log(`manual download failed: ${error.message}`)
+        const { response } = await dialog.showMessageBox({
+          type: 'error',
+          title: 'Update download failed',
+          message: 'The update could not be downloaded automatically.',
+          detail: `${error.message}\n\nYou can download it from the releases page instead.`,
+          buttons: ['Open releases page', 'Cancel'],
+          defaultId: 0,
+          cancelId: 1
+        })
+        if (response === 0) shell.openExternal(RELEASES_PAGE)
+        return { error: error.message }
+      }
+    }
+
+    autoUpdater.downloadUpdate()
+    return { downloading: true }
+  }
+
   setTimeout(() => { check({ silent: true }) }, FIRST_CHECK_DELAY_MS)
-  return { check }
+  return { check, install }
 }
 
 module.exports = { setupUpdater, RELEASES_PAGE }

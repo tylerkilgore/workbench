@@ -1086,6 +1086,21 @@ el('select-none').addEventListener('click', () => {
 api.onScanProgress(({ done, total }) => {
   el('scan-root').textContent = `Reading repositories… ${done}/${total}`
 })
+// The background check announces itself here rather than in a dialog: a native
+// dialog is application-modal, and while one is open the app cannot quit.
+api.onUpdateAvailable(({ version }) => {
+  el('update-dot').hidden = false
+  const item = el('install-update')
+  item.hidden = false
+  item.textContent = `Update to ${version}`
+})
+
+el('install-update').addEventListener('click', async () => {
+  setMenu(false)
+  // From here dialogs are fine: the user asked for this one.
+  await api.installUpdate()
+})
+
 el('check-updates').addEventListener('click', async () => {
   setMenu(false)
   const result = await api.checkForUpdates()
