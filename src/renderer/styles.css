@@ -772,6 +772,30 @@ h1 {
 
 .dep-cell { display: flex; flex-wrap: wrap; gap: .25rem; }
 
+/* Status colour comes from what the status means, not what it is called. */
+.status-chip {
+  padding: .1rem .4rem;
+  border: 1px solid currentcolor;
+  border-radius: 3px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .66rem;
+  white-space: nowrap;
+}
+
+/* Not started: present, but the quietest thing in the row. */
+.status-chip--default { color: var(--wb-text-3); background: var(--wb-surface-2); }
+
+/* Tagged `next` — what Workbook's own `next` would hand you. */
+.status-chip--next { color: var(--wb-primary); background: var(--wb-primary-tint-1); }
+
+/* In flight, two shades so adjacent columns stay distinguishable. */
+.status-chip--active-a { color: var(--wb-warn); background: var(--wb-warn-surface); }
+.status-chip--active-b { color: #a774d8; background: rgba(167, 116, 216, .12); }
+
+/* Tagged `done` — what satisfies a dependency. */
+.status-chip--done { color: var(--wb-ok); background: rgba(31, 138, 87, .14); }
+
+
 /* --- import ------------------------------------------------------------- */
 
 .import-controls { flex: 0 0 auto; }
@@ -1128,6 +1152,7 @@ button.ghost:hover { background: var(--wb-primary-tint-1); }
 
 /* The whole assignee cell is a control, so it needs to look like one without
    competing with the task title beside it. */
+.task-status,
 .task-assignees {
   display: flex;
   align-items: center;
@@ -1138,7 +1163,10 @@ button.ghost:hover { background: var(--wb-primary-tint-1); }
   cursor: pointer;
 }
 
+.task-status:hover,
 .task-assignees:hover { border-color: var(--wb-control); background: var(--wb-primary-tint-4); }
+
+.assign-menu .menu-item:disabled { cursor: default; opacity: .8; }
 
 .assign-add {
   color: var(--wb-muted);

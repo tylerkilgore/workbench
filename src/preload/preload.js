@@ -19,7 +19,12 @@ contextBridge.exposeInMainWorld('workbench', {
   scan: (root, maxDepth) => ipcRenderer.invoke('discovery:scan', { root, maxDepth }),
   importRepositories: (selections) => ipcRenderer.invoke('import:apply', { selections }),
 
-  openProject: (projectId) => ipcRenderer.invoke('project:open', { projectId }),
+  openProject: (projectId, taskId = null) =>
+    ipcRenderer.invoke('project:open', { projectId, taskId }),
+  listStatuses: (projectId, refresh = false) =>
+    ipcRenderer.invoke('project:statuses', { projectId, refresh }),
+  setTaskStatus: (projectId, taskId, status) =>
+    ipcRenderer.invoke('task:status', { projectId, taskId, status }),
   showChrome: () => ipcRenderer.invoke('project:showChrome'),
   closeProject: (projectId) => ipcRenderer.invoke('project:close', { projectId }),
   forgetProject: (projectId) => ipcRenderer.invoke('project:forget', { projectId }),

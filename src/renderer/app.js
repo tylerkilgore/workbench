@@ -311,6 +311,26 @@ function visibleTasks () {
   })
 }
 
+/**
+ * Which colour a status gets.
+ *
+ * Driven by Workbook's own tags rather than by the status name, because a
+ * project can rename its columns and the tags are what the tool itself reasons
+ * about: `next` is what `next` picks from, `done` is what satisfies a
+ * dependency. Anything untagged is work in flight, and takes its shade from
+ * where it sits in the project's order so two in-flight columns do not come out
+ * the same colour.
+ */
+function statusClass (task) {
+  const tags = task.statusTags ?? []
+  if (tags.includes('done')) return 'status-chip--done'
+  if (tags.includes('next')) return 'status-chip--next'
+  if (tags.includes('default')) return 'status-chip--default'
+  return (task.statusOrder ?? 0) % 2 === 0
+    ? 'status-chip--active-b'
+    : 'status-chip--active-a'
+}
+
 function chipFor (text, className, title) {
   const node = document.createElement('span')
   node.className = className
@@ -363,7 +383,8 @@ function renderQueue () {
   for (const task of visible) {
     const row = document.createElement('tr')
     row.title = task.id
-    row.addEventListener('click', () => openProject(task.projectId))
+    // The task, not the board it lives on.
+    row.addEventListener('click', () => openTask(task))
 
     const priority = document.createElement('td')
     priority.append(chipFor(task.priority, `priority priority--${task.priority}`))
@@ -419,7 +440,18 @@ function renderQueue () {
     deps.append(depCell)
 
     const status = document.createElement('td')
-    status.append(chipFor(task.status, 'label'))
+    const statusHolder = document.createElement('span')
+    statusHolder.className = 'task-status'
+    statusHolder.setAttribute('role', 'button')
+    statusHolder.tabIndex = 0
+    statusHolder.title = 'Change this task\u2019s status'
+    statusHolder.append(chipFor(task.status, `status-chip ${statusClass(task)}`))
+    const openStatus = (event) => { event.stopPropagation(); showStatusMenu(task, statusHolder) }
+    statusHolder.addEventListener('click', openStatus)
+    statusHolder.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') openStatus(event)
+    })
+    status.append(statusHolder)
 
     const project = document.createElement('td')
     project.append(chipFor(`${task.projectKey} · ${task.projectName}`, 'cell-muted'))
@@ -603,9 +635,14 @@ function showAssignMenu (task, anchor) {
   menu.hidden = false
   // Focusing here would steal the keyboard from a user who opened the picker to
   // click a name, so the field waits to be chosen.
+  positionMenu(menu, anchor)
+}
 
-  // Anchored under the cell, then pulled back inside the window if that would
-  // put it off the bottom or the right edge.
+/**
+ * Anchor a popover under the control that opened it, pulled back inside the
+ * window if that would put it off the bottom or the right edge.
+ */
+function positionMenu (menu, anchor) {
   const rect = anchor.getBoundingClientRect()
   const size = menu.getBoundingClientRect()
   const left = Math.min(rect.left, window.innerWidth - size.width - 8)
@@ -615,6 +652,82 @@ function showAssignMenu (task, anchor) {
     : below
   menu.style.left = `${Math.max(8, left)}px`
   menu.style.top = `${top}px`
+}
+
+/**
+ * Open the status picker for one task.
+ *
+ * The choices are that project's own statuses, in that project's own order,
+ * because a vocabulary is per project: offering a column another repository
+ * happens to define would produce a refusal, not a move.
+ */
+async function showStatusMenu (task, anchorElement) {
+  const menu = el('assign-menu')
+  menu.innerHTML = ''
+  menu.hidden = false
+
+  let vocabulary
+  try {
+    vocabulary = await api.listStatuses(task.projectId)
+  } catch (error) {
+    closeAssignMenu()
+    showQueueError(error.message)
+    return
+  }
+
+  menu.innerHTML = ''
+  for (const status of vocabulary.statuses) {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'menu-item'
+    item.setAttribute('role', 'menuitem')
+    const name = document.createElement('span')
+    name.textContent = status.label
+    item.append(name)
+    // The tags are what Workbook itself reasons about — `next` is what `next`
+    // picks from, `done` is what satisfies a dependency — so they are shown
+    // rather than left as a name that happens to mean something.
+    if (status.tags.length > 0) {
+      const tags = document.createElement('small')
+      tags.textContent = status.tags.join(', ')
+      item.append(tags)
+    }
+    if (status.status === task.status) {
+      item.classList.add('menu-item--active')
+      item.disabled = true
+      item.title = 'Already in this status'
+    } else {
+      item.addEventListener('click', async () => {
+        closeAssignMenu()
+        try {
+          await api.setTaskStatus(task.projectId, task.id, status.status)
+          await loadQueue()
+        } catch (error) {
+          showQueueError(error.message)
+        }
+      })
+    }
+    menu.append(item)
+  }
+  positionMenu(menu, anchorElement)
+}
+
+function showQueueError (message) {
+  el('queue-failures').hidden = false
+  el('queue-failures').textContent = message
+}
+
+/** Open the board on this task, rather than on the board it lives in. */
+async function openTask (task) {
+  setView('project', task.projectId)
+  el('board-state').textContent = `Opening ${task.title}…`
+  try {
+    await api.openProject(task.projectId, task.id)
+    el('board-state').textContent = ''
+  } catch (error) {
+    el('board-state').textContent = `Could not open this board: ${error.message}`
+  }
+  loadProjects()
 }
 
 // --- people ------------------------------------------------------------------

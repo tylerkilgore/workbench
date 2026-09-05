@@ -207,11 +207,14 @@ function watchBoardReloads (projectId, view) {
  * header names the address the listener bound, and the Origin the board sees is
  * its own. A proxy or an iframe would break one or both.
  */
-async function openProject (projectId) {
+async function openProject (projectId, taskId = null) {
   const project = registry.find(projectId)
   if (!project) throw new Error(`unknown project: ${projectId}`)
 
   const url = await supervisor.start(project)
+  // The board has a route per task, so a row can open the thing it names
+  // rather than the board it lives on.
+  const target = taskId ? new URL(`/tasks/${encodeURIComponent(taskId)}`, url).href : url
 
   let view = boardViews.get(projectId)
   if (!view) {
@@ -227,10 +230,12 @@ async function openProject (projectId) {
     boardViews.set(projectId, view)
     watchBoardReloads(projectId, view)
     window.contentView.addChildView(view)
-    await view.webContents.loadURL(url)
+    await view.webContents.loadURL(target)
     await applyThemeToBoard(projectId, view)
-  } else if (view.webContents.getURL() !== url) {
-    await view.webContents.loadURL(url) // The server restarted on a new port.
+  } else if (view.webContents.getURL() !== target) {
+    // A warm view showing something else — another task, or the board root, or
+    // an address from a server that has since restarted on a new port.
+    await view.webContents.loadURL(target)
   }
 
   activeProjectId = projectId
@@ -382,7 +387,8 @@ ipcMain.handle('theme:set', async (_event, { theme }) => {
   return { theme, dark: resolveDark() }
 })
 
-ipcMain.handle('project:open', async (_event, { projectId }) => openProject(projectId))
+ipcMain.handle('project:open', async (_event, { projectId, taskId }) =>
+  openProject(projectId, taskId ?? null))
 ipcMain.handle('project:showChrome', async () => { showChrome() })
 ipcMain.handle('project:close', async (_event, { projectId }) => { closeProject(projectId) })
 
@@ -407,7 +413,14 @@ ipcMain.handle('queue:load', async () => {
   const projects = registry.projects
   const settled = await Promise.all(projects.map(async (project) => {
     try {
-      const tasks = await workbook.listTasks(project.path)
+      // The vocabulary comes along on the first load of each project and is
+      // cached after: a status means something by its tags — `next` is what
+      // `next` picks from, `done` is what satisfies a dependency — and a name
+      // alone cannot say which, since a project may rename its own columns.
+      const [tasks] = await Promise.all([
+        workbook.listTasks(project.path),
+        cachedStatuses(project).catch(() => null)
+      ])
       return { project, tasks, error: null }
     } catch (error) {
       return { project, tasks: [], error: error.message }
@@ -477,6 +490,8 @@ ipcMain.handle('queue:load', async () => {
         // Workbook records an assignment as an email address; the principal is
         // the person it names, the creator the person who recorded it.
         assignees: (task.assignments ?? []).map((assignment) => assignment.principal),
+        statusTags: statusCache.get(entry.project.id)?.byName.get(task.status)?.tags ?? [],
+        statusOrder: statusCache.get(entry.project.id)?.byName.get(task.status)?.order ?? 0,
         projectId: entry.project.id,
         projectName: entry.project.name,
         projectKey: entry.project.key
@@ -516,6 +531,46 @@ ipcMain.handle('queue:load', async () => {
  * the creator recorded against the assignment — the repository's user.email,
  * not Workbench's idea of who you are.
  */
+// A project's statuses, read the first time a picker needs them.
+//
+// Cached because a vocabulary is edited rarely and read often, and lazily
+// because most sessions never open a status picker at all — reading twelve
+// projects' statuses on every queue load would undo the work that got the queue
+// down to one subprocess per project.
+const statusCache = new Map()
+
+async function cachedStatuses (project, refresh = false) {
+  if (!refresh && statusCache.has(project.id)) return statusCache.get(project.id)
+  const vocabulary = await workbook.listStatuses(project.path)
+  // Indexed by name as well, so a task can find its own status without a scan.
+  vocabulary.byName = new Map(vocabulary.statuses.map((status) => [status.status, status]))
+  statusCache.set(project.id, vocabulary)
+  return vocabulary
+}
+
+ipcMain.handle('project:statuses', async (_event, { projectId, refresh }) => {
+  const project = registry.find(projectId)
+  if (!project) throw new Error(`unknown project: ${projectId}`)
+  const vocabulary = await cachedStatuses(project, refresh)
+  // byName is a Map and does not survive the IPC boundary; the array does.
+  return { default: vocabulary.default, statuses: vocabulary.statuses }
+})
+
+/**
+ * Move a task to a status.
+ *
+ * Workbook refuses a status the project does not define, which is the whole
+ * validation this needs: the picker offers that project's own vocabulary, so a
+ * refusal here means the vocabulary changed underneath it and the cache is
+ * stale — worth reporting rather than retrying.
+ */
+ipcMain.handle('task:status', async (_event, { projectId, taskId, status }) => {
+  const project = registry.find(projectId)
+  if (!project) throw new Error(`unknown project: ${projectId}`)
+  await workbook.setStatus(project.path, taskId, status)
+  return { ok: true }
+})
+
 ipcMain.handle('task:assign', async (_event, { projectId, taskId, email }) => {
   const project = registry.find(projectId)
   if (!project) throw new Error(`unknown project: ${projectId}`)

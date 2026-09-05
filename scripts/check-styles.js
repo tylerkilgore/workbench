@@ -37,6 +37,27 @@ for (const match of js.matchAll(/className\s*=\s*`([^`$]*)/g)) {
 
 // Only real class names: a template literal can leave fragments like "??"
 // behind, and those are noise rather than findings.
+// A selector line ending in a comma must be followed by more selector, not by
+// a comment or a blank line: a selector list that never reaches a { swallows
+// the next rule, and the page renders with a block quietly missing.
+const cssLines = css.split('\n')
+const dangling = []
+for (let i = 0; i < cssLines.length; i += 1) {
+  if (!cssLines[i].trim().endsWith(',')) continue
+  if (cssLines[i].trim().startsWith('--') || cssLines[i].includes(':')) continue
+  let j = i + 1
+  while (j < cssLines.length && cssLines[j].trim() === '') j += 1
+  const next = j < cssLines.length ? cssLines[j].trim() : ''
+  if (!next || next.startsWith('/*') || next.startsWith('}')) {
+    dangling.push(`${i + 1}: ${cssLines[i].trim()}`)
+  }
+}
+if (dangling.length > 0) {
+  console.error('selector lists that never reach a rule block:')
+  for (const entry of dangling) console.error(`  ${entry}`)
+  process.exit(1)
+}
+
 const missing = [...used]
   .filter((name) => /^[a-zA-Z][\w-]*$/.test(name))
   .filter((name) => !defined.has(name))
