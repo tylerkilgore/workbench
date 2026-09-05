@@ -123,3 +123,20 @@ jobs:
         run: |
           test -f build/workbook.exe || { echo "build/workbook.exe missing"; ls -la build; exit 1; }
           ./build/workbook.exe version
+
+      # Staging being correct did not make packaging correct: extraResources
+      # merges across platform blocks rather than replacing, so Windows went
+      # looking for the POSIX binary name and copied the licence twice at once,
+      # which it answers with EBUSY. Packaging is checked here so that class of
+      # thing is found on a push rather than on a tag. --dir only: this proves
+      # the bundle assembles, and publishes nothing.
+      - name: The Windows bundle assembles with its resources
+        shell: bash
+        run: |
+          npx electron-builder --win --dir
+          resources=dist/win-unpacked/resources
+          test -f "$resources/workbook.exe" || { echo "workbook.exe missing from resources"; ls -la "$resources"; exit 1; }
+          test -f "$resources/WORKBOOK-LICENSE" || { echo "licence missing from resources"; ls -la "$resources"; exit 1; }
+          test -f dist/win-unpacked/Workbench.exe || { echo "Workbench.exe missing"; exit 1; }
+          echo "bundle assembled with:"
+          ls -1 "$resources" | grep -iE 'workbook|license'
