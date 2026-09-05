@@ -27,9 +27,24 @@ jobs:
           - os: macos-14
             name: macOS (arm64 + x64)
             build: npx electron-builder --mac --publish always
-          - os: windows-2022
-            name: Windows (x64 + arm64)
-            build: npx electron-builder --win --publish always
+          - os: ubuntu-latest
+            name: Linux (x64 + arm64)
+            build: npx electron-builder --linux --publish always
+
+          # Windows is not built yet, and the reason is upstream rather than
+          # here: the Workbook CLI this app bundles does not compile for Windows
+          # at the pinned ref. `npm run stage` would fail before packaging, so
+          # enabling this row now would only turn every release red — and a
+          # Windows build that skipped the CLI would install an app that cannot
+          # open a single project.
+          #
+          # The port is three build-tagged files (flock, the socket directory's
+          # privacy check, and a POSIX-only test helper). Re-enable this row once
+          # the "workbook" pin in package.json names a ref that includes it.
+          #
+          # - os: windows-2022
+          #   name: Windows (x64 + arm64)
+          #   build: npx electron-builder --win --publish always
 
     steps:
       - name: Checkout

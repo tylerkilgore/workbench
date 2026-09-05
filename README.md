@@ -19,9 +19,9 @@ npm start
 ## Building
 
 ```
-npm run dist       # macOS, this machine's architecture
-npm run dist:mac   # macOS, arm64 + x64
-npm run dist:win   # Windows, x64 + arm64
+npm run dist         # macOS, this machine's architecture
+npm run dist:mac     # macOS, arm64 + x64
+npm run dist:linux   # Linux, x64 + arm64 (AppImage + deb)
 ```
 
 Each build:
@@ -62,7 +62,7 @@ Push a tag:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-`.github/workflows/release.yml` builds macOS (arm64 + x64) and Windows
+`.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux
 (x64 + arm64) and publishes one GitHub Release **in this repository**. Its feed
 files — `latest.yml`, `latest-mac.yml` — are what the in-app updater reads, so
 the release is the update channel; there is no separate releases repo to keep in
@@ -197,6 +197,26 @@ The overlay is an overlay on someone else's stylesheet and will drift when that
 stylesheet changes. It is confined to colour — nothing in it moves a layout, a
 size, or a radius — so the worst a drift can do is leave a light patch.
 
+## Platform support
+
+| | Status |
+| --- | --- |
+| macOS (arm64, x64) | Built and released. Ad-hoc signed, not notarized. |
+| Linux (x64, arm64) | Built and released as AppImage and deb. |
+| Windows | **Blocked upstream.** |
+
+Windows is blocked by the Workbook CLI, not by this app. At the pinned ref it
+does not compile for `windows/amd64` or `windows/arm64`: `internal/historyvalidation`
+uses `flock(2)`, `internal/syncloop` reads a uid out of `syscall.Stat_t`, and a
+POSIX-only process-group helper sits in a non-test package. Each is genuinely
+platform-specific and each needs a build-tagged Windows counterpart.
+
+The app itself is already portable — the CLI is named `workbook.exe` there, the
+install locations and scan exclusions are per-platform, and Windows gets hidden
+title-bar chrome with native overlay controls so Snap Layouts keep working.
+Re-enable the Windows row in `release.yml` once the `workbook` pin names a ref
+that builds there.
+
 ## Known gaps
 
 - The bundled binary is built at package time and does not update afterwards.
@@ -205,8 +225,8 @@ size, or a radius — so the worst a drift can do is leave a light patch.
   updater is possible — it is just not wired up.
 - Building requires Go and a Workbook checkout. There is no fallback to
   downloading a released artifact when neither is present.
-- The build is arm64 and ad-hoc signed only: no universal binary, no
-  notarization, no auto-update.
+- macOS builds are ad-hoc signed and not notarized, so Gatekeeper needs the
+  right-click-Open dance on first launch.
 - Projects can be forgotten but not renamed from the UI.
 - The merged queue is read-only; writes go through each project's board.
 - Workbook's CLI JSON envelope and HTTP routes are not versioned as a public
