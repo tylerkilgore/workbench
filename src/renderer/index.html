@@ -137,6 +137,10 @@
       </footer>
     </section>
 
+    <!-- The assignee picker, one popover reused by every row: a menu per task
+         would be four hundred hidden menus on a busy queue. -->
+    <div id="assign-menu" class="menu assign-menu" role="menu" hidden></div>
+
     <!-- Who works on these repositories, read out of their commit history. -->
     <section id="view-people" class="view" hidden>
       <header class="view-head">

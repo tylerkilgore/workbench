@@ -154,6 +154,7 @@ function assigneeLabel (email) {
 }
 
 function renderQueue () {
+  closeAssignMenu()
   const body = el('queue-body')
   body.innerHTML = ''
 
@@ -184,6 +185,10 @@ function renderQueue () {
     title.textContent = task.title
 
     const assignees = document.createElement('span')
+    assignees.className = 'task-assignees'
+    assignees.setAttribute('role', 'button')
+    assignees.tabIndex = 0
+    assignees.title = 'Change who this is assigned to'
     for (const email of task.assignees ?? []) {
       const chip = document.createElement('span')
       chip.className = 'assignee' + (state.myEmails.includes(email.toLowerCase()) ? ' assignee--me' : '')
@@ -191,6 +196,22 @@ function renderQueue () {
       chip.title = email
       assignees.append(chip)
     }
+    if ((task.assignees ?? []).length === 0) {
+      const add = document.createElement('span')
+      add.className = 'assign-add'
+      add.textContent = 'assign'
+      assignees.append(add)
+    }
+    // The row opens the project; the cell opens the picker. Without this the
+    // picker would be a board switch.
+    const openPicker = (event) => {
+      event.stopPropagation()
+      showAssignMenu(task, assignees)
+    }
+    assignees.addEventListener('click', openPicker)
+    assignees.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') openPicker(event)
+    })
 
     const status = document.createElement('span')
     status.className = 'label'
@@ -205,6 +226,133 @@ function renderQueue () {
     row.addEventListener('click', () => openProject(task.projectId))
     body.append(row)
   }
+}
+
+// --- assigning --------------------------------------------------------------
+
+function closeAssignMenu () {
+  el('assign-menu').hidden = true
+}
+
+/**
+ * Open the picker for one task, anchored under the cell that opened it.
+ *
+ * Everyone in the directory is offered, not only the people already on this
+ * project: assigning someone their first task in a repository is exactly when
+ * they would not appear yet.
+ */
+function showAssignMenu (task, anchor) {
+  const menu = el('assign-menu')
+  menu.innerHTML = ''
+
+  const assigned = new Set((task.assignees ?? []).map((email) => email.toLowerCase()))
+
+  const act = async (run) => {
+    closeAssignMenu()
+    try {
+      const result = await run()
+      if (result && result.cancelled) return
+      await loadQueue()
+    } catch (error) {
+      // A refusal here is a rule, not a fault — Workbook lets only the person
+      // an assignment names or the one who recorded it remove it.
+      el('queue-failures').hidden = false
+      el('queue-failures').textContent = error.message
+    }
+  }
+
+  for (const email of task.assignees ?? []) {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'menu-item menu-item--remove'
+    item.setAttribute('role', 'menuitem')
+    item.textContent = `Unassign ${assigneeLabel(email)}`
+    item.addEventListener('click', () =>
+      act(() => api.unassignTask(task.projectId, task.id, email)))
+    menu.append(item)
+  }
+
+  if (assigned.size > 0) {
+    const separator = document.createElement('div')
+    separator.className = 'menu-separator'
+    separator.setAttribute('role', 'separator')
+    menu.append(separator)
+  }
+
+  const candidates = state.people.filter((person) => !person.bot)
+  // Me first: it is the assignment most often wanted, and the one the CLI
+  // spells `self`.
+  candidates.sort((a, b) => {
+    const mineA = a.emails.some((email) => state.myEmails.includes(email))
+    const mineB = b.emails.some((email) => state.myEmails.includes(email))
+    return (mineB ? 1 : 0) - (mineA ? 1 : 0) || b.commits - a.commits
+  })
+
+  let offered = 0
+  for (const person of candidates) {
+    // The primary address is the one an assignment should use.
+    const [email] = person.emails
+    if (!email || assigned.has(email)) continue
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'menu-item'
+    item.setAttribute('role', 'menuitem')
+    const name = document.createElement('span')
+    name.textContent = state.myEmails.includes(email) ? `${person.displayName} (me)` : person.displayName
+    const address = document.createElement('small')
+    address.textContent = email
+    item.append(name, address)
+    item.addEventListener('click', () =>
+      act(() => api.assignTask(task.projectId, task.id, email)))
+    menu.append(item)
+    offered += 1
+  }
+
+  // Anyone at all, not only the people git already knows about. Workbook
+  // accepts any address, and the moment you most need that is the moment a
+  // person has no commits here yet — which is exactly when the directory,
+  // built from commit history, cannot offer them.
+  if (offered > 0 || assigned.size > 0) {
+    const separator = document.createElement('div')
+    separator.className = 'menu-separator'
+    separator.setAttribute('role', 'separator')
+    menu.append(separator)
+  }
+
+  const custom = document.createElement('input')
+  custom.type = 'email'
+  custom.className = 'assign-custom'
+  custom.placeholder = 'someone@example.com'
+  custom.setAttribute('aria-label', 'Assign to an email address')
+  custom.addEventListener('click', (event) => event.stopPropagation())
+  custom.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return
+    const email = custom.value.trim().toLowerCase()
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
+      custom.classList.add('invalid')
+      return
+    }
+    if (assigned.has(email)) { closeAssignMenu(); return }
+    act(() => api.assignTask(task.projectId, task.id, email))
+  })
+  custom.addEventListener('input', () => custom.classList.remove('invalid'))
+  menu.append(custom)
+
+  menu.hidden = false
+  // Focusing here would steal the keyboard from a user who opened the picker to
+  // click a name, so the field waits to be chosen.
+
+  // Anchored under the cell, then pulled back inside the window if that would
+  // put it off the bottom or the right edge.
+  const rect = anchor.getBoundingClientRect()
+  const size = menu.getBoundingClientRect()
+  const left = Math.min(rect.left, window.innerWidth - size.width - 8)
+  const below = rect.bottom + 4
+  const top = below + size.height > window.innerHeight
+    ? Math.max(8, rect.top - size.height - 4)
+    : below
+  menu.style.left = `${Math.max(8, left)}px`
+  menu.style.top = `${top}px`
 }
 
 // --- people ------------------------------------------------------------------
@@ -576,6 +724,9 @@ el('menu-button').addEventListener('click', (event) => {
 // two ways out a menu is expected to have.
 document.addEventListener('click', (event) => {
   if (menuOpen() && !el('menu').contains(event.target)) setMenu(false)
+  if (!el('assign-menu').hidden && !el('assign-menu').contains(event.target)) {
+    closeAssignMenu()
+  }
 })
 
 document.addEventListener('keydown', (event) => {
@@ -583,6 +734,7 @@ document.addEventListener('keydown', (event) => {
     setMenu(false)
     el('menu-button').focus()
   }
+  if (event.key === 'Escape' && !el('assign-menu').hidden) closeAssignMenu()
 })
 
 for (const option of document.querySelectorAll('.theme-option')) {

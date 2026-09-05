@@ -472,6 +472,54 @@ async function peopleDirectory () {
   return people.buildDirectory(repositories, registry.peopleMapping)
 }
 
+/**
+ * Assign a task, asking about a collision rather than deciding one.
+ *
+ * Workbook refuses with exit 10 when somebody else already holds the task, and
+ * that refusal is deliberate: whether a second person should hold it too is a
+ * question about people, not about software. So it is put to the user, and
+ * --force is only ever sent because they said yes.
+ *
+ * The command runs in the project's own checkout, which is also what decides
+ * the creator recorded against the assignment — the repository's user.email,
+ * not Workbench's idea of who you are.
+ */
+ipcMain.handle('task:assign', async (_event, { projectId, taskId, email }) => {
+  const project = registry.find(projectId)
+  if (!project) throw new Error(`unknown project: ${projectId}`)
+
+  const first = await workbook.assign(project.path, taskId, email)
+  if (first.ok) return { ok: true, forced: false }
+
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'question',
+    title: 'Already assigned',
+    message: 'This task is already assigned to someone else.',
+    detail: `${first.message}\n\nAssignments are additive — recording this one leaves theirs in place.`,
+    buttons: ['Assign anyway', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1
+  })
+  if (response !== 0) return { ok: false, cancelled: true }
+
+  await workbook.assign(project.path, taskId, email, { force: true })
+  return { ok: true, forced: true }
+})
+
+/**
+ * Remove an assignment.
+ *
+ * Workbook allows this only for the person the assignment names or the person
+ * who recorded it. That refusal is a rule about who may act, so it is reported
+ * rather than retried with a flag — there is no flag.
+ */
+ipcMain.handle('task:unassign', async (_event, { projectId, taskId, email }) => {
+  const project = registry.find(projectId)
+  if (!project) throw new Error(`unknown project: ${projectId}`)
+  await workbook.unassign(project.path, taskId, email)
+  return { ok: true }
+})
+
 ipcMain.handle('people:list', async () => {
   const projects = registry.projects
   const described = await repoinfo.describeAll(projects.map((project) => project.path))

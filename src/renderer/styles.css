@@ -861,6 +861,67 @@ button.ghost:hover { background: var(--wb-primary-tint-1); }
 
 .assignee--me { border-color: var(--wb-primary); color: var(--wb-primary); }
 
+/* The whole assignee cell is a control, so it needs to look like one without
+   competing with the task title beside it. */
+.task-assignees {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .1rem .2rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.task-assignees:hover { border-color: var(--wb-control); background: var(--wb-primary-tint-4); }
+
+.assign-add {
+  color: var(--wb-muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .66rem;
+  white-space: nowrap;
+}
+
+.task-assignees:hover .assign-add { color: var(--wb-primary); }
+
+/* Positioned per invocation, so it only needs to be taken out of the flow. */
+.assign-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 15rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.assign-menu .menu-item { display: flex; align-items: baseline; gap: .4rem; }
+
+.assign-menu .menu-item small {
+  color: var(--wb-muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .64rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assign-menu .menu-item--remove { color: var(--wb-danger); }
+
+.assign-custom {
+  width: calc(100% - .3rem);
+  margin: .15rem;
+  padding: .3rem .5rem;
+  border: 1px solid var(--wb-control);
+  border-radius: 4px;
+  background: var(--wb-surface);
+  color: var(--wb-text);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .74rem;
+}
+
+.assign-custom::placeholder { color: var(--wb-muted); }
+.assign-custom.invalid { border-color: var(--wb-danger); color: var(--wb-danger); }
+
 .failures {
   padding: .6rem .7rem;
   border: 1px solid var(--wb-danger-edge);

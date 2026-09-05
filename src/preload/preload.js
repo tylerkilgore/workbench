@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('workbench', {
 
   loadQueue: () => ipcRenderer.invoke('queue:load'),
 
+  assignTask: (projectId, taskId, email) =>
+    ipcRenderer.invoke('task:assign', { projectId, taskId, email }),
+  unassignTask: (projectId, taskId, email) =>
+    ipcRenderer.invoke('task:unassign', { projectId, taskId, email }),
+
   listPeople: () => ipcRenderer.invoke('people:list'),
   setDefaultAssignee: (email) => ipcRenderer.invoke('people:setDefault', { email }),
   mergePeople: (emails) => ipcRenderer.invoke('people:merge', { emails }),
