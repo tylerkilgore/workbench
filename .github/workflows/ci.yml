@@ -26,6 +26,12 @@ jobs:
       - name: Workflow files are well formed
         run: node scripts/check-workflows.js
 
+      # Four edits in this project removed a CSS rule as collateral while
+      # replacing an adjacent one. The page still renders, just wrongly, so
+      # nothing else here would notice.
+      - name: Every renderer class is styled
+        run: node scripts/check-styles.js
+
       - name: Every source file parses
         run: |
           for file in src/main/*.js src/preload/*.js src/renderer/app.js scripts/*.js; do

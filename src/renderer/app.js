@@ -13,6 +13,15 @@ const state = {
   filter: 'all',
   queueSort: 'priority',
   queueSortDesc: false,
+  // A set per group. Empty means the group constrains nothing, so the default
+  // state and the cleared state are the same thing.
+  filters: {
+    priority: new Set(),
+    status: new Set(),
+    project: new Set(),
+    assignee: new Set(),
+    deps: new Set()
+  },
   tasks: [],
   people: [],
   myEmails: [],
@@ -126,56 +135,120 @@ async function loadQueue () {
     failures.hidden = true
   }
 
-  populateFilters()
+  renderFilterGroups()
   renderQueue()
 }
 
+/** Count how often each value occurs, so an option can show its size. */
+function tally (pick) {
+  const counts = new Map()
+  for (const task of state.tasks) {
+    for (const value of [pick(task)].flat()) {
+      if (value === undefined || value === null) continue
+      counts.set(value, (counts.get(value) ?? 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+}
+
+const UNASSIGNED = '\u0000unassigned'
+
+const DEPENDENCY_OPTIONS = [
+  ['blocked', 'Blocked', (task) => task.blocked],
+  ['ready', 'Ready', (task) => !task.blocked],
+  ['blocking', 'Blocks others', (task) => (task.blocks ?? []).length > 0],
+  ['independent', 'No dependencies',
+    (task) => !task.blocked && (task.blocks ?? []).length === 0]
+]
+
 /**
- * Fill each column's filter from the data actually present.
+ * Build the modal's groups from the data actually present.
  *
  * Offering a status or a project the list does not contain invites a filter
- * that returns nothing and explains nothing.
+ * that returns nothing and explains nothing, so every option here is one that
+ * matches at least one task.
  */
-function populateFilters () {
-  const fill = (id, values, label) => {
-    const select = el(id)
-    const chosen = select.value
-    select.innerHTML = ''
-    const any = document.createElement('option')
-    any.value = ''
-    any.textContent = 'Any'
-    select.append(any)
+function renderFilterGroups () {
+  const container = el('filter-groups')
+  container.innerHTML = ''
+
+  const groups = [
+    ['priority', 'Priority',
+      tally((task) => task.priority)
+        .sort((a, b) => (PRIORITY_ORDER[a[0]] ?? 3) - (PRIORITY_ORDER[b[0]] ?? 3)),
+      (value) => value],
+    ['status', 'Status',
+      tally((task) => task.status).sort((a, b) => a[0].localeCompare(b[0])),
+      (value) => value],
+    ['assignee', 'Assignee',
+      tally((task) => (task.assignees ?? []).length === 0 ? UNASSIGNED : task.assignees)
+        .sort((a, b) => b[1] - a[1]),
+      (value) => value === UNASSIGNED ? 'Unassigned' : assigneeLabel(value)],
+    ['deps', 'Dependencies',
+      DEPENDENCY_OPTIONS.map(([value, , match]) =>
+        [value, state.tasks.filter(match).length]),
+      (value) => DEPENDENCY_OPTIONS.find(([key]) => key === value)?.[1] ?? value],
+    ['project', 'Project',
+      tally((task) => task.projectId).sort((a, b) => b[1] - a[1]),
+      (id) => {
+        const task = state.tasks.find((candidate) => candidate.projectId === id)
+        return task ? `${task.projectKey} · ${task.projectName}` : id
+      }]
+  ]
+
+  for (const [name, label, values, describe] of groups) {
+    if (values.length === 0) continue
+    const group = document.createElement('section')
+    group.className = 'filter-group'
+    const heading = document.createElement('div')
+    heading.className = 'filter-group__name'
+    heading.textContent = label
+    const options = document.createElement('div')
+    options.className = 'filter-group__options'
+
     for (const [value, count] of values) {
-      const option = document.createElement('option')
-      option.value = value
-      option.textContent = `${label(value)} (${count})`
-      select.append(option)
+      if (!count) continue
+      const option = document.createElement('label')
+      option.className = 'filter-option'
+      const box = document.createElement('input')
+      box.type = 'checkbox'
+      box.checked = state.filters[name].has(value)
+      box.addEventListener('change', () => {
+        if (box.checked) state.filters[name].add(value)
+        else state.filters[name].delete(value)
+        renderQueue()
+        updateFilterSummary()
+      })
+      const text = document.createElement('span')
+      text.textContent = describe(value)
+      const size = document.createElement('span')
+      size.className = 'count'
+      size.textContent = count
+      option.append(box, text, size)
+      options.append(option)
     }
-    // A selection that no longer matches anything is dropped rather than left
-    // filtering the list down to nothing with no visible cause.
-    select.value = values.some(([value]) => value === chosen) ? chosen : ''
+    group.append(heading, options)
+    container.append(group)
   }
+  updateFilterSummary()
+}
 
-  const tally = (pick) => {
-    const counts = new Map()
-    for (const task of state.tasks) {
-      for (const value of [pick(task)].flat()) {
-        if (value === undefined || value === null) continue
-        counts.set(value, (counts.get(value) ?? 0) + 1)
-      }
-    }
-    return [...counts.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
-  }
+/** How many groups are constraining the list. */
+function activeGroupCount () {
+  return Object.values(state.filters).filter((set) => set.size > 0).length
+}
 
-  fill('f-priority', tally((task) => task.priority), (value) => value)
-  fill('f-status', tally((task) => task.status), (value) => value)
-  fill('f-project', tally((task) => task.projectId),
-    (id) => state.tasks.find((task) => task.projectId === id)?.projectKey ?? id)
-
-  const assignees = tally((task) =>
-    (task.assignees ?? []).length === 0 ? '\u0000unassigned' : task.assignees)
-  fill('f-assignee', assignees,
-    (value) => value === '\u0000unassigned' ? 'Unassigned' : assigneeLabel(value))
+function updateFilterSummary () {
+  const groups = activeGroupCount()
+  const badge = el('filter-badge')
+  badge.hidden = groups === 0
+  badge.textContent = groups
+  el('filter-button').setAttribute('aria-expanded',
+    el('filter-modal').open ? 'true' : 'false')
+  const chosen = Object.values(state.filters).reduce((total, set) => total + set.size, 0)
+  el('filter-summary').textContent = chosen === 0
+    ? 'No filters — showing everything'
+    : `${chosen} selected across ${groups} group${groups === 1 ? '' : 's'}`
 }
 
 function matchesTaskQuery (task, query) {
@@ -187,38 +260,33 @@ function matchesTaskQuery (task, query) {
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }
 
-function activeFilters () {
-  return {
-    priority: el('f-priority').value,
-    title: el('f-title').value.trim(),
-    assignee: el('f-assignee').value,
-    deps: el('f-deps').value,
-    status: el('f-status').value,
-    project: el('f-project').value
-  }
-}
-
 function visibleTasks () {
-  const filters = activeFilters()
+  const { priority, status, project, assignee, deps } = state.filters
+  const query = el('f-title').value.trim()
 
   const filtered = state.tasks.filter((task) => {
-    if (filters.priority && task.priority !== filters.priority) return false
-    if (filters.status && task.status !== filters.status) return false
-    if (filters.project && task.projectId !== filters.project) return false
+    // An empty set is not a filter. Within a group the options are alternatives
+    // — "high or medium" — and the groups then narrow each other.
+    if (priority.size > 0 && !priority.has(task.priority)) return false
+    if (status.size > 0 && !status.has(task.status)) return false
+    if (project.size > 0 && !project.has(task.projectId)) return false
 
-    if (filters.assignee === '\u0000unassigned') {
-      if ((task.assignees ?? []).length > 0) return false
-    } else if (filters.assignee && !(task.assignees ?? []).includes(filters.assignee)) {
-      return false
+    if (assignee.size > 0) {
+      const held = task.assignees ?? []
+      const matches = held.length === 0
+        ? assignee.has(UNASSIGNED)
+        : held.some((email) => assignee.has(email))
+      if (!matches) return false
     }
 
-    if (filters.deps === 'blocked' && !task.blocked) return false
-    if (filters.deps === 'ready' && task.blocked) return false
-    if (filters.deps === 'blocking' && (task.blocks ?? []).length === 0) return false
-    if (filters.deps === 'independent' &&
-        (task.blocked || (task.blocks ?? []).length > 0)) return false
+    if (deps.size > 0) {
+      const matches = DEPENDENCY_OPTIONS
+        .filter(([value]) => deps.has(value))
+        .some(([, , match]) => match(task))
+      if (!matches) return false
+    }
 
-    return matchesTaskQuery(task, filters.title)
+    return matchesTaskQuery(task, query)
   })
 
   const key = {
@@ -267,8 +335,7 @@ function renderQueue () {
     ? ''
     : `${visible.length} of ${state.tasks.length} tasks`
 
-  const filters = activeFilters()
-  el('queue-clear-filters').hidden = !Object.values(filters).some(Boolean)
+  updateFilterSummary()
 
   // The header arrows are drawn from the sort state rather than set by the
   // click handler, so they cannot claim an order the table is not in.
@@ -953,18 +1020,33 @@ for (const header of document.querySelectorAll('.task-table__headers th[data-sor
   })
 }
 
-for (const id of ['f-priority', 'f-assignee', 'f-deps', 'f-status', 'f-project']) {
-  el(id).addEventListener('change', renderQueue)
-}
 el('f-title').addEventListener('input', renderQueue)
 
-el('queue-clear-filters').addEventListener('click', () => {
-  for (const id of ['f-priority', 'f-assignee', 'f-deps', 'f-status', 'f-project']) {
-    el(id).value = ''
-  }
-  el('f-title').value = ''
+el('filter-button').addEventListener('click', () => {
+  // showModal, not show: it takes focus, traps it, dims the page behind, and
+  // closes on Escape without any of that being written here.
+  el('filter-modal').showModal()
+  updateFilterSummary()
+})
+
+el('filter-close').addEventListener('click', () => el('filter-modal').close())
+el('filter-done').addEventListener('click', () => el('filter-modal').close())
+
+el('filter-clear').addEventListener('click', () => {
+  for (const set of Object.values(state.filters)) set.clear()
+  // Rebuilt rather than unticked one by one, so the boxes and the sets cannot
+  // disagree about what is selected.
+  renderFilterGroups()
   renderQueue()
 })
+
+// Clicking the backdrop closes it: a dialog's own box is the only thing inside
+// its bounds, so a click landing on the dialog itself landed outside the box.
+el('filter-modal').addEventListener('click', (event) => {
+  if (event.target === el('filter-modal')) el('filter-modal').close()
+})
+
+el('filter-modal').addEventListener('close', updateFilterSummary)
 
 el('dismiss-key-note').addEventListener('click', dismissKeyNote)
 el('pick-folder').addEventListener('click', pickFolder)
