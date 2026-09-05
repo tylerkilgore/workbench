@@ -23,6 +23,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Workflow files are well formed
+        run: node scripts/check-workflows.js
+
       - name: Every source file parses
         run: |
           for file in src/main/*.js src/preload/*.js src/renderer/app.js scripts/*.js; do

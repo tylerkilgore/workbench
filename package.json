@@ -14,7 +14,8 @@
     "dist:mac": "npm run stage && electron-builder --mac",
     "dist:win": "npm run stage && electron-builder --win",
     "release": "npm run stage && electron-builder --publish always",
-    "dist:linux": "npm run stage && electron-builder --linux"
+    "dist:linux": "npm run stage && electron-builder --linux",
+    "check:workflows": "node scripts/check-workflows.js"
   },
   "license": "MIT",
   "build": {
@@ -151,7 +152,7 @@
   "homepage": "https://github.com/tylerkilgore/workbench",
   "workbook": {
     "repository": "https://github.com/tylerkilgore/workbook.git",
-    "ref": "afb28111fede0f100590c7ea7f565e30986cb9c6",
+    "ref": "f01514d4fb0dae586a66d0b96cd56939f6024519",
     "upstream": "https://github.com/dgoings/workbook.git",
     "branches": [
       "feat/windows-support",
