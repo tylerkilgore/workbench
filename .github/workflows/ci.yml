@@ -1,0 +1,79 @@
+name: CI
+
+# Every module must parse and the generated board overlay must match its
+# source. Neither is a substitute for a test suite; both catch the mistakes
+# this project has actually made — a bad edit that removed a function, and a
+# hand-maintained stylesheet drifting from the one it overlays.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Every source file parses
+        run: |
+          for file in src/main/*.js src/preload/*.js src/renderer/app.js scripts/*.js; do
+            node --check "$file"
+          done
+
+      - name: Every export resolves
+        run: |
+          node -e "
+            for (const m of ['workbook','discovery','registry','supervisor','boardtheme','repoinfo']) {
+              const mod = require('./src/main/' + m)
+              const bad = Object.entries(mod).filter(([, v]) => typeof v !== 'function')
+              if (bad.length) { console.error(m, 'has non-function exports:', bad.map(([k]) => k)); process.exit(1) }
+              console.log(m, '->', Object.keys(mod).join(', '))
+            }
+          "
+
+      - name: Renderer references only elements that exist
+        run: |
+          node -e "
+            const fs = require('fs')
+            const html = fs.readFileSync('src/renderer/index.html', 'utf8')
+            const js = fs.readFileSync('src/renderer/app.js', 'utf8')
+            const ids = new Set([...html.matchAll(/id=\"([\w-]+)\"/g)].map(m => m[1]))
+            const used = new Set([...js.matchAll(/el\('([\w-]+)'\)/g)].map(m => m[1]))
+            const missing = [...used].filter(id => !ids.has(id))
+            if (missing.length) { console.error('missing element ids:', missing); process.exit(1) }
+            console.log('all', used.size, 'referenced ids exist')
+          "
+
+      - name: IPC channels line up
+        run: |
+          node -e "
+            const fs = require('fs')
+            const main = fs.readFileSync('src/main/main.js', 'utf8')
+            const pre = fs.readFileSync('src/preload/preload.js', 'utf8')
+            const handled = new Set([...main.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]))
+            const invoked = new Set([...pre.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(m => m[1]))
+            const orphans = [...invoked].filter(c => !handled.has(c))
+            if (orphans.length) { console.error('invoked but not handled:', orphans); process.exit(1) }
+            console.log('all', invoked.size, 'channels handled')
+          "
+
+      - name: Board overlay matches its source
+        run: |
+          git clone --quiet --depth 1 --branch "$(node -p 'require("./package.json").workbook.ref')" \
+            "$(node -p 'require("./package.json").workbook.repository')" /tmp/workbook
+          WORKBOOK_REPO=/tmp/workbook node scripts/generate-board-dark.js
+          if ! git diff --quiet -- src/renderer/board-dark.css; then
+            echo "board-dark.css is stale. Run: npm run gen:board-dark"
+            git diff -- src/renderer/board-dark.css | head -40
+            exit 1
+          fi
+          echo "board-dark.css is current"

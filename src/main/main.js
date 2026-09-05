@@ -1,0 +1,441 @@
+'use strict'
+
+const { app, BaseWindow, WebContentsView, ipcMain, dialog, shell, nativeTheme } = require('electron')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const { Registry } = require('./registry')
+const { Supervisor } = require('./supervisor')
+const { darkPrimaryRamp, DEFAULT_PRIMARY } = require('./boardtheme')
+const discovery = require('./discovery')
+const repoinfo = require('./repoinfo')
+const workbook = require('./workbook')
+const { setupUpdater } = require('./updater')
+
+const SIDEBAR_WIDTH = 260
+const MIN_WIDTH = 1000
+const MIN_HEIGHT = 680
+
+/** @type {BaseWindow|null} */
+let window = null
+/** @type {WebContentsView|null} */
+let chromeView = null
+/** Board views, one per project, kept warm once opened. @type {Map<string, WebContentsView>} */
+const boardViews = new Map()
+let activeProjectId = null
+
+// The dark overlay for the boards. Read once: it is injected into and removed
+// from every board view as the theme changes, and re-reading it per view would
+// only add a filesystem round trip to a theme switch.
+const BOARD_DARK_CSS = fs.readFileSync(
+  path.join(__dirname, '..', 'renderer', 'board-dark.css'), 'utf8'
+)
+
+/** Keys returned by insertCSS, so the overlay can be removed again. */
+const boardDarkKeys = new Map()
+
+const registry = new Registry(app.getPath('userData'))
+const supervisor = new Supervisor()
+
+/** @type {{check: (options?: {silent?: boolean}) => Promise<object>}|null} */
+let updater = null
+
+function boardBounds () {
+  const { width, height } = window.getContentBounds()
+  return { x: SIDEBAR_WIDTH, y: 0, width: Math.max(0, width - SIDEBAR_WIDTH), height }
+}
+
+function layout () {
+  if (!window) return
+  const { width, height } = window.getContentBounds()
+  chromeView?.setBounds({ x: 0, y: 0, width, height })
+  const bounds = boardBounds()
+  for (const [projectId, view] of boardViews) {
+    // Views for projects that are not showing are parked off-screen rather than
+    // detached, so switching back does not reload the board or lose its state.
+    view.setBounds(projectId === activeProjectId ? bounds : { x: 0, y: 0, width: 0, height: 0 })
+  }
+}
+
+function toChrome (channel, payload) {
+  chromeView?.webContents.send(channel, payload)
+}
+
+function createWindow () {
+  window = new BaseWindow({
+    width: 1280,
+    height: 820,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
+    title: 'Workbench',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    backgroundColor: resolveDark() ? '#0f141c' : '#e9eef5'
+  })
+
+  chromeView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+  window.contentView.addChildView(chromeView)
+  chromeView.webContents.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+
+  window.on('resize', layout)
+  layout()
+
+  if (process.argv.includes('--dev')) {
+    chromeView.webContents.openDevTools({ mode: 'detach' })
+  }
+}
+
+// --- theme -----------------------------------------------------------------
+
+/**
+ * Whether the app is currently dark.
+ *
+ * 'system' defers to the OS, which is why nativeTheme is consulted rather than
+ * remembered: the OS can flip while the app runs, and a remembered answer would
+ * leave the shell and the boards disagreeing with each other.
+ */
+function resolveDark () {
+  const choice = registry.theme
+  if (choice === 'dark') return true
+  if (choice === 'light') return false
+  return nativeTheme.shouldUseDarkColors
+}
+
+/**
+ * Put one board view in the current mode.
+ *
+ * The overlay is inserted and removed rather than toggled by a class, because
+ * the board's own document is not ours to add classes to: it is re-rendered by
+ * its own client on every poll, and anything written into it would be lost.
+ * Injected CSS survives that, and survives a reload.
+ */
+async function applyThemeToBoard (projectId, view) {
+  const dark = resolveDark()
+  const existing = boardDarkKeys.get(projectId)
+
+  if (dark && !existing) {
+    try {
+      // Read the colour this project chose before overriding anything, so the
+      // derived ramp is built from the board's own accent rather than replacing
+      // it. A board that never set one reports Workbook's default.
+      let primary = DEFAULT_PRIMARY
+      try {
+        primary = await view.webContents.executeJavaScript(
+          `getComputedStyle(document.documentElement).getPropertyValue('--wb-primary').trim()`
+        ) || DEFAULT_PRIMARY
+      } catch {
+        // A board that cannot be queried yet gets the default ramp; the
+        // did-finish-load pass re-derives it against the loaded document.
+      }
+      const css = `${BOARD_DARK_CSS}\n${darkPrimaryRamp(primary)}`
+      boardDarkKeys.set(projectId, await view.webContents.insertCSS(css))
+    } catch (error) {
+      // A view still loading gets the overlay from did-finish-load instead, so
+      // this is recoverable — but it is reported rather than swallowed, because
+      // a silent failure here looks exactly like a board that ignored the theme.
+      console.warn(`workbench: could not darken board ${projectId}: ${error.message}`)
+    }
+  } else if (!dark && existing) {
+    try {
+      await view.webContents.removeInsertedCSS(existing)
+    } catch (error) {
+      // The view reloaded and dropped it already, which is the outcome we want.
+      console.warn(`workbench: could not undarken board ${projectId}: ${error.message}`)
+    }
+    boardDarkKeys.delete(projectId)
+  }
+}
+
+/** Put the whole app in the current mode: the window, the shell, the boards. */
+async function applyTheme () {
+  const dark = resolveDark()
+  window?.setBackgroundColor(dark ? '#0f141c' : '#e9eef5')
+  toChrome('theme:changed', { theme: registry.theme, dark })
+  await Promise.all(
+    [...boardViews].map(([projectId, view]) => applyThemeToBoard(projectId, view))
+  )
+}
+
+// A board reloads on navigation and on a server restart, and injected CSS is
+// dropped when it does. Re-inserting on load is what keeps a board dark across
+// its own lifecycle rather than only at the moment it was opened.
+function watchBoardReloads (projectId, view) {
+  view.webContents.on('did-finish-load', () => {
+    boardDarkKeys.delete(projectId)
+    applyThemeToBoard(projectId, view)
+  })
+}
+
+/**
+ * Show one project's board, starting its server if it is not already running.
+ *
+ * Each board is its own WebContentsView loading the child server's real
+ * address. That is what keeps Workbook's same-origin guard satisfied: the Host
+ * header names the address the listener bound, and the Origin the board sees is
+ * its own. A proxy or an iframe would break one or both.
+ */
+async function openProject (projectId) {
+  const project = registry.find(projectId)
+  if (!project) throw new Error(`unknown project: ${projectId}`)
+
+  const url = await supervisor.start(project)
+
+  let view = boardViews.get(projectId)
+  if (!view) {
+    view = new WebContentsView({
+      webPreferences: { contextIsolation: true, nodeIntegration: false }
+    })
+    // Links out of the board (a repository URL, say) belong in the browser, not
+    // in a view that has no chrome to get back from.
+    view.webContents.setWindowOpenHandler(({ url: target }) => {
+      shell.openExternal(target)
+      return { action: 'deny' }
+    })
+    boardViews.set(projectId, view)
+    watchBoardReloads(projectId, view)
+    window.contentView.addChildView(view)
+    await view.webContents.loadURL(url)
+    await applyThemeToBoard(projectId, view)
+  } else if (view.webContents.getURL() !== url) {
+    await view.webContents.loadURL(url) // The server restarted on a new port.
+  }
+
+  activeProjectId = projectId
+  layout()
+  return { url }
+}
+
+function showChrome () {
+  activeProjectId = null
+  layout()
+}
+
+function closeProject (projectId) {
+  const view = boardViews.get(projectId)
+  if (view) {
+    window.contentView.removeChildView(view)
+    view.webContents.close()
+    boardViews.delete(projectId)
+    boardDarkKeys.delete(projectId)
+  }
+  supervisor.stop(projectId)
+  if (activeProjectId === projectId) showChrome()
+}
+
+// --- IPC -------------------------------------------------------------------
+
+ipcMain.handle('workbook:version', async () => {
+  const data = await workbook.version()
+  return data
+})
+
+ipcMain.handle('registry:list', async () => ({
+  projects: registry.projects.map((project) => ({
+    ...project,
+    ...supervisor.status(project.id)
+  })),
+  scanRoots: registry.scanRoots
+}))
+
+ipcMain.handle('discovery:pickFolder', async () => {
+  const result = await dialog.showOpenDialog(window, {
+    title: 'Choose a folder to scan for repositories',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle('discovery:scan', async (_event, { root, maxDepth }) => {
+  const repositories = await discovery.scan(root, { maxDepth })
+  await registry.rememberScanRoot(root)
+
+  const imported = new Map(registry.projects.map((project) => [project.path, project]))
+  for (const repository of repositories) {
+    repository.imported = imported.has(repository.path)
+  }
+
+  // Metadata is gathered after the filesystem walk rather than during it: the
+  // walk is fast and the git calls are not, and a scan that reported nothing
+  // until every repository had been described would feel broken on a large
+  // tree.
+  const described = await repoinfo.describeAll(
+    repositories.map((repository) => repository.path),
+    { onProgress: (progress) => toChrome('discovery:progress', progress) }
+  )
+  for (const repository of repositories) {
+    Object.assign(repository, described.get(repository.path) ?? {})
+  }
+
+  return { root, repositories }
+})
+
+/**
+ * Import the selected repositories.
+ *
+ * A repository that is already initialized is *adopted*, not bootstrapped: it
+ * is registered from the identity it already carries and `setup` is never run.
+ * That matters for two reasons. Its key cannot be changed — `setup` with a
+ * different one fails with "repository is already initialized with project key"
+ * — so re-running it can only either no-op or fail. And `setup` also rewrites
+ * the managed agent documentation and the skill directory, which is not
+ * something adding a repository to a list should do to a checkout the user
+ * already configured by hand.
+ *
+ * Only a repository with no identity yet is bootstrapped, with
+ * `--no-sync`: adding a repository to a list must not push refs to its remote
+ * as a side effect. Failures are collected rather than thrown, so one bad
+ * repository does not abandon the rest of the batch half-done.
+ */
+ipcMain.handle('import:apply', async (_event, { selections }) => {
+  const results = []
+  for (const selection of selections) {
+    try {
+      let project
+      const existing = await discovery.inspectRepository(selection.path)
+
+      if (existing.initialized) {
+        project = {
+          id: existing.projectId,
+          key: existing.key,
+          name: selection.name || existing.name,
+          path: selection.path,
+          importedAt: new Date().toISOString(),
+          adopted: true
+        }
+      } else {
+        if (!discovery.isValidKey(selection.key)) {
+          throw new Error(`"${selection.key}" is not a valid project key (A-Z, 2-10 characters)`)
+        }
+        const data = await workbook.setup(selection.path, selection.key)
+        project = {
+          id: data.projectId,
+          key: data.key,
+          name: selection.name || path.basename(selection.path),
+          path: selection.path,
+          importedAt: new Date().toISOString()
+        }
+      }
+
+      await registry.upsert(project)
+      results.push({ ok: true, path: selection.path, project, adopted: Boolean(project.adopted) })
+    } catch (error) {
+      results.push({ ok: false, path: selection.path, error: error.message })
+    }
+    toChrome('import:progress', { done: results.length, total: selections.length })
+  }
+  return { results }
+})
+
+ipcMain.handle('update:check', async () => {
+  if (!updater) return { skipped: 'not ready' }
+  // Not silent: this one was asked for, so "you are up to date" is an answer,
+  // not noise.
+  return updater.check({ silent: false })
+})
+
+ipcMain.handle('theme:get', async () => ({ theme: registry.theme, dark: resolveDark() }))
+
+ipcMain.handle('theme:set', async (_event, { theme }) => {
+  if (!['system', 'light', 'dark'].includes(theme)) throw new Error(`unknown theme: ${theme}`)
+  await registry.setTheme(theme)
+  await applyTheme()
+  return { theme, dark: resolveDark() }
+})
+
+ipcMain.handle('project:open', async (_event, { projectId }) => openProject(projectId))
+ipcMain.handle('project:showChrome', async () => { showChrome() })
+ipcMain.handle('project:close', async (_event, { projectId }) => { closeProject(projectId) })
+
+ipcMain.handle('project:forget', async (_event, { projectId }) => {
+  // Only Workbench's registry entry is dropped. The repository keeps its
+  // refs/workbook/* and its .workbook/config.json: removing a project from a
+  // list is not a reason to destroy its task history.
+  closeProject(projectId)
+  await registry.remove(projectId)
+})
+
+/**
+ * The merged queue: every project's tasks in one ranked list.
+ *
+ * This is the read Workbook has no single command for, because `list` is bound
+ * to the repository at the working directory. Running it once per repository
+ * and merging is the whole trick, and distinct project keys are what make the
+ * merged rows tell you where each task lives.
+ */
+ipcMain.handle('queue:load', async () => {
+  const projects = registry.projects
+  const settled = await Promise.all(projects.map(async (project) => {
+    try {
+      const tasks = await workbook.listTasks(project.path)
+      return { project, tasks, error: null }
+    } catch (error) {
+      return { project, tasks: [], error: error.message }
+    }
+  }))
+
+  const tasks = []
+  const failures = []
+  for (const entry of settled) {
+    if (entry.error) {
+      failures.push({ project: entry.project.name, error: entry.error })
+      continue
+    }
+    for (const task of entry.tasks) {
+      if (task.status === 'done' || task.deleted) continue
+      tasks.push({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        labels: task.labels ?? [],
+        updatedAt: task.updatedAt,
+        blocked: (task.dependencies ?? []).length > 0,
+        projectId: entry.project.id,
+        projectName: entry.project.name,
+        projectKey: entry.project.key
+      })
+    }
+  }
+
+  const order = { high: 0, medium: 1, low: 2 }
+  tasks.sort((a, b) =>
+    (order[a.priority] ?? 3) - (order[b.priority] ?? 3) ||
+    String(b.updatedAt).localeCompare(String(a.updatedAt))
+  )
+  return { tasks, failures }
+})
+
+// --- lifecycle -------------------------------------------------------------
+
+supervisor.on('exited', ({ projectId, wasRunning }) => {
+  if (wasRunning) toChrome('project:exited', { projectId, ...supervisor.status(projectId) })
+})
+
+nativeTheme.on('updated', () => {
+  if (registry.theme === 'system') applyTheme()
+})
+
+app.whenReady().then(async () => {
+  await registry.load()
+  createWindow()
+  updater = setupUpdater()
+  app.on('activate', () => {
+    if (BaseWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+// Child servers hold listeners; leaking them would leave ports bound after the
+// app is gone.
+app.on('before-quit', () => supervisor.stopAll())
+process.on('exit', () => supervisor.stopAll())
