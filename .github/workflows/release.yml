@@ -157,5 +157,8 @@ jobs:
             --draft=false \
             --latest
           echo "Published ${GITHUB_REF_NAME}"
+          # isLatest is not a field `gh release view --json` accepts; asking
+          # for it fails the step. The draft flag is the one that decides
+          # whether the updater can see this release at all.
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
-            --json isDraft,isLatest --jq '"draft=\(.isDraft) latest=\(.isLatest)"'
+            --json isDraft --jq '"draft=\(.isDraft)"'
