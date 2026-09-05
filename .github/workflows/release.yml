@@ -125,8 +125,37 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
             dist/*.exe
             dist/*.blockmap
             dist/latest*.yml
           if-no-files-found: error
           retention-days: 14
+
+  # electron-builder uploads into a draft, which is right while two jobs are
+  # writing to the same release: nobody should be able to download a release
+  # that is half a platform. But a draft is invisible to
+  # /repos/:owner/:repo/releases/latest, which is the endpoint electron-updater
+  # reads — left as a draft, a published release is one no running copy of the
+  # app can ever see. So the last step of a release is to stop being a draft,
+  # and it runs only once every platform has uploaded.
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Mark the release published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --latest
+          echo "Published ${GITHUB_REF_NAME}"
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --json isDraft,isLatest --jq '"draft=\(.isDraft) latest=\(.isLatest)"'

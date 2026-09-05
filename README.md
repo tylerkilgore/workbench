@@ -64,9 +64,15 @@ git tag v0.1.0 && git push origin v0.1.0
 
 `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux
 (x64 + arm64) and publishes one GitHub Release **in this repository**. Its feed
-files — `latest.yml`, `latest-mac.yml` — are what the in-app updater reads, so
-the release is the update channel; there is no separate releases repo to keep in
-step.
+files — `latest-mac.yml`, `latest-linux.yml` — are what the in-app updater
+reads, so the release is the update channel; there is no separate releases repo
+to keep in step.
+
+Each platform uploads into a draft, which is right while two jobs are writing to
+one release: nobody should download a release that is half a platform. A final
+job marks it published once every platform has uploaded. That step is not
+cosmetic — a draft is invisible to the `releases/latest` endpoint the updater
+reads, so a release left as a draft is one no running copy of the app can see.
 
 Windows installers are signed through Azure Trusted Signing when these
 repository secrets are set, and are simply unsigned when they are not:
