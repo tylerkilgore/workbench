@@ -131,6 +131,7 @@ Electron main ─ supervises ─→ workbook serve   (repo A)  → 127.0.0.1:733
 | `src/main/registry.js` | Imported projects, persisted |
 | `src/main/workbook.js` | Locating and driving the CLI |
 | `src/main/boardtheme.js` | Per-project dark ramp derivation |
+| `src/main/people.js` | People directory and identity merging |
 | `src/renderer/` | Shell UI, and the board dark overlay |
 
 ## Why it is built this way

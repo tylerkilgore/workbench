@@ -40,7 +40,7 @@
 
     <nav class="rail">
       <button class="rail-item" data-view="queue" type="button">
-        <span class="glyph">≡</span> Now
+        <span class="glyph">≡</span> Tasks
       </button>
       <button class="rail-item" data-view="import" type="button">
         <span class="glyph">+</span> Import repositories
@@ -59,7 +59,7 @@
     <!-- The merged cross-project queue. -->
     <section id="view-queue" class="view">
       <header class="view-head">
-        <h1>Now</h1>
+        <h1>Tasks</h1>
         <p class="subtitle">Open tasks across every imported project, ranked by priority.</p>
       </header>
       <div class="filter-bar">
@@ -70,8 +70,28 @@
           <button class="chip active" data-queue-filter="all" type="button">All</button>
           <button class="chip" data-queue-filter="mine" type="button">Mine</button>
           <button class="chip" data-queue-filter="unassigned" type="button">Unassigned</button>
+          <button class="chip" data-queue-filter="ready" type="button">Ready</button>
+          <button class="chip" data-queue-filter="blocked" type="button">Blocked</button>
         </div>
         <span id="queue-count" class="result-count"></span>
+      </div>
+
+      <div class="filter-bar filter-bar--second">
+        <label class="select-label">
+          Project
+          <select id="queue-project" aria-label="Filter by project">
+            <option value="">All projects</option>
+          </select>
+        </label>
+        <label class="select-label">
+          Sort
+          <select id="queue-sort" aria-label="Sort tasks">
+            <option value="priority">Priority</option>
+            <option value="updated">Recently updated</option>
+            <option value="project">Project</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
       </div>
       <div id="queue-failures" class="failures" hidden></div>
       <div id="queue-body" class="queue view-scroll"></div>

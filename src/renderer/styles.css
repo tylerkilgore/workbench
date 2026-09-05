@@ -503,7 +503,7 @@ h1 {
    one-pixel shadow the board draws under every card. */
 .task {
   display: grid;
-  grid-template-columns: 4rem minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 4rem minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: .75rem;
   padding: .55rem .7rem;
@@ -589,6 +589,41 @@ h1 {
 .chip:last-child { border-radius: 0 4px 4px 0; }
 .chip:hover { background: var(--wb-primary-tint-4); }
 .chip.active { background: var(--wb-primary-tint-1); color: var(--wb-primary); }
+
+.filter-bar--second { margin-top: -.3rem; }
+
+.select-label {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  color: var(--wb-muted);
+  font-size: .78rem;
+  white-space: nowrap;
+}
+
+.select-label select {
+  padding: .3rem .4rem;
+  border: 1px solid var(--wb-control);
+  border-radius: 4px;
+  background: var(--wb-surface);
+  color: var(--wb-text);
+  font: inherit;
+  font-size: .78rem;
+}
+
+/* What is actually holding a task up. Amber rather than red: blocked is an
+   ordinary state for queued work, not a fault. */
+.blocked-chip {
+  padding: .1rem .3rem;
+  border: 1px solid var(--wb-warn-edge);
+  border-radius: 3px;
+  background: var(--wb-warn-surface);
+  color: var(--wb-warn);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .64rem;
+  white-space: nowrap;
+  cursor: help;
+}
 
 .result-count {
   flex: 0 0 auto;
@@ -906,6 +941,12 @@ button.ghost:hover { background: var(--wb-primary-tint-1); }
 }
 
 .assign-menu .menu-item--remove { color: var(--wb-danger); }
+
+/* The row Enter would pick. */
+.assign-menu .menu-item--active {
+  background: var(--wb-primary-tint-1);
+  color: var(--wb-primary);
+}
 
 .assign-custom {
   width: calc(100% - .3rem);

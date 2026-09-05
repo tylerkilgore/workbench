@@ -416,8 +416,35 @@ ipcMain.handle('queue:load', async () => {
       failures.push({ project: entry.project.name, error: entry.error })
       continue
     }
+
+    // Every task in the project, including the done ones, so a dependency can
+    // be resolved to a title and a status. The done ones are then dropped from
+    // the queue itself — they are context for what blocks, not work to show.
+    const byId = new Map(entry.tasks.map((task) => [task.id, task]))
+
     for (const task of entry.tasks) {
       if (task.status === 'done' || task.deleted) continue
+
+      // What is actually holding this task up. Workbook's own `next` considers
+      // a task eligible when every dependency sits in a status tagged done, so
+      // an unfinished dependency is the difference between "queued" and
+      // "cannot be started" — which is worth saying on the row rather than
+      // leaving to whoever opens the board.
+      const blockedBy = []
+      for (const dependencyId of task.dependencies ?? []) {
+        const dependency = byId.get(dependencyId)
+        if (!dependency) {
+          // A dependency in another project, or one since deleted: it cannot be
+          // resolved here, and claiming it is satisfied would be a guess.
+          blockedBy.push({ id: dependencyId, title: null, status: 'unknown' })
+          continue
+        }
+        if (dependency.status !== 'done') {
+          blockedBy.push({
+            id: dependencyId, title: dependency.title, status: dependency.status
+          })
+        }
+      }
       tasks.push({
         id: task.id,
         title: task.title,
@@ -425,7 +452,9 @@ ipcMain.handle('queue:load', async () => {
         priority: task.priority,
         labels: task.labels ?? [],
         updatedAt: task.updatedAt,
-        blocked: (task.dependencies ?? []).length > 0,
+        dependencies: (task.dependencies ?? []).length,
+        blockedBy,
+        blocked: blockedBy.length > 0,
         // Workbook records an assignment as an email address; the principal is
         // the person it names, the creator the person who recorded it.
         assignees: (task.assignments ?? []).map((assignment) => assignment.principal),

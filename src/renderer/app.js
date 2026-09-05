@@ -13,6 +13,8 @@ const state = {
   filter: 'all',
   queueQuery: '',
   queueFilter: 'all',
+  queueProject: '',
+  queueSort: 'priority',
   tasks: [],
   people: [],
   myEmails: [],
@@ -126,6 +128,7 @@ async function loadQueue () {
     failures.hidden = true
   }
 
+  renderProjectFilter()
   renderQueue()
 }
 
@@ -139,12 +142,57 @@ function matchesTaskQuery (task, query) {
     .every((term) => haystack.includes(term))
 }
 
+const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }
+
 function visibleTasks () {
-  return state.tasks.filter((task) => {
+  const filtered = state.tasks.filter((task) => {
     if (state.queueFilter === 'mine' && !task.mine) return false
     if (state.queueFilter === 'unassigned' && (task.assignees ?? []).length > 0) return false
+    if (state.queueFilter === 'ready' && task.blocked) return false
+    if (state.queueFilter === 'blocked' && !task.blocked) return false
+    if (state.queueProject && task.projectId !== state.queueProject) return false
     return matchesTaskQuery(task, state.queueQuery)
   })
+
+  // Sorted here rather than in the main process: the order is a view choice,
+  // and re-sorting a list already in hand should not cost a round trip.
+  const byPriority = (a, b) =>
+    (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3)
+  const byUpdated = (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))
+
+  const comparators = {
+    priority: (a, b) => byPriority(a, b) || byUpdated(a, b),
+    updated: byUpdated,
+    project: (a, b) =>
+      a.projectKey.localeCompare(b.projectKey) || byPriority(a, b) || byUpdated(a, b),
+    title: (a, b) => a.title.localeCompare(b.title)
+  }
+  return filtered.sort(comparators[state.queueSort] ?? comparators.priority)
+}
+
+/** Keep the project menu in step with what is actually imported. */
+function renderProjectFilter () {
+  const select = el('queue-project')
+  const chosen = state.queueProject
+  const seen = new Map()
+  for (const task of state.tasks) {
+    if (!seen.has(task.projectId)) seen.set(task.projectId, task)
+  }
+  select.innerHTML = ''
+  const all = document.createElement('option')
+  all.value = ''
+  all.textContent = `All projects (${seen.size})`
+  select.append(all)
+  for (const [id, task] of [...seen].sort((a, b) => a[1].projectKey.localeCompare(b[1].projectKey))) {
+    const option = document.createElement('option')
+    option.value = id
+    const count = state.tasks.filter((candidate) => candidate.projectId === id).length
+    option.textContent = `${task.projectKey} · ${task.projectName} (${count})`
+    select.append(option)
+  }
+  // A project filtered to nothing must not silently persist as a dead value.
+  select.value = seen.has(chosen) ? chosen : ''
+  state.queueProject = select.value
 }
 
 /** The name to show for an assignee, falling back to the address itself. */
@@ -213,6 +261,21 @@ function renderQueue () {
       if (event.key === 'Enter' || event.key === ' ') openPicker(event)
     })
 
+    const blocked = document.createElement('span')
+    if (task.blocked) {
+      const chip = document.createElement('span')
+      chip.className = 'blocked-chip'
+      chip.textContent = `blocked ×${task.blockedBy.length}`
+      // The titles, not just the count: "blocked" is only useful if you can
+      // see what by without opening the board.
+      chip.title = 'Waiting on:\n' + task.blockedBy
+        .map((dependency) => dependency.title
+          ? `  ${dependency.title} (${dependency.status})`
+          : `  ${dependency.id} (not in this project)`)
+        .join('\n')
+      blocked.append(chip)
+    }
+
     const status = document.createElement('span')
     status.className = 'label'
     status.textContent = task.status
@@ -221,7 +284,7 @@ function renderQueue () {
     project.className = 'task-meta'
     project.textContent = `${task.projectKey} · ${task.projectName}`
 
-    row.append(priority, title, assignees, status, project)
+    row.append(priority, title, assignees, blocked, status, project)
     row.title = task.id
     row.addEventListener('click', () => openProject(task.projectId))
     body.append(row)
@@ -297,6 +360,10 @@ function showAssignMenu (task, anchor) {
     item.type = 'button'
     item.className = 'menu-item'
     item.setAttribute('role', 'menuitem')
+    item.dataset.email = email
+    // Every address the person has, so searching a work address finds them
+    // even when the primary one is personal.
+    item.dataset.search = [person.displayName, ...person.emails].join(' ').toLowerCase()
     const name = document.createElement('span')
     name.textContent = state.myEmails.includes(email) ? `${person.displayName} (me)` : person.displayName
     const address = document.createElement('small')
@@ -320,23 +387,65 @@ function showAssignMenu (task, anchor) {
   }
 
   const custom = document.createElement('input')
-  custom.type = 'email'
+  custom.type = 'text'
   custom.className = 'assign-custom'
-  custom.placeholder = 'someone@example.com'
-  custom.setAttribute('aria-label', 'Assign to an email address')
+  custom.placeholder = 'Type a name or email…'
+  custom.setAttribute('aria-label', 'Assign to a person or email address')
+  custom.setAttribute('autocomplete', 'off')
   custom.addEventListener('click', (event) => event.stopPropagation())
+  menu.append(custom)
+
+  // Typing narrows the people already listed, so the field is a filter first
+  // and a free-text escape hatch second. Assigning someone usually means
+  // finding a name, not remembering an address.
+  const offeredItems = [...menu.querySelectorAll('.menu-item[data-email]')]
+
+  function currentMatches () {
+    const term = custom.value.trim().toLowerCase()
+    if (!term) return offeredItems
+    return offeredItems.filter((item) => item.dataset.search.includes(term))
+  }
+
+  function highlight (items) {
+    for (const item of offeredItems) item.classList.remove('menu-item--active')
+    if (items.length > 0) items[0].classList.add('menu-item--active')
+  }
+
+  function applyFilter () {
+    custom.classList.remove('invalid')
+    const matches = currentMatches()
+    const shown = new Set(matches)
+    for (const item of offeredItems) item.hidden = !shown.has(item)
+    highlight(matches)
+  }
+
+  custom.addEventListener('input', applyFilter)
+
   custom.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return
-    const email = custom.value.trim().toLowerCase()
-    if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
-      custom.classList.add('invalid')
+    const matches = currentMatches()
+    const typed = custom.value.trim().toLowerCase()
+
+    // A name that matches somebody wins over treating the text as an address:
+    // "tyler" is a person here, not a mailbox.
+    if (matches.length > 0) {
+      const email = matches[0].dataset.email
+      if (assigned.has(email)) { closeAssignMenu(); return }
+      act(() => api.assignTask(task.projectId, task.id, email))
       return
     }
-    if (assigned.has(email)) { closeAssignMenu(); return }
-    act(() => api.assignTask(task.projectId, task.id, email))
+
+    // Nothing matched, so this must be an address for somebody not yet known.
+    if (!/^[^@\s]+@[^@\s]+$/.test(typed)) {
+      custom.classList.add('invalid')
+      custom.title = 'No one matches that. Type a full email address to assign someone new.'
+      return
+    }
+    if (assigned.has(typed)) { closeAssignMenu(); return }
+    act(() => api.assignTask(task.projectId, task.id, typed))
   })
-  custom.addEventListener('input', () => custom.classList.remove('invalid'))
-  menu.append(custom)
+
+  applyFilter()
 
   menu.hidden = false
   // Focusing here would steal the keyboard from a user who opened the picker to
@@ -750,6 +859,16 @@ for (const button of document.querySelectorAll('.rail-item')) {
 }
 el('queue-search').addEventListener('input', () => {
   state.queueQuery = el('queue-search').value.trim()
+  renderQueue()
+})
+
+el('queue-project').addEventListener('change', () => {
+  state.queueProject = el('queue-project').value
+  renderQueue()
+})
+
+el('queue-sort').addEventListener('change', () => {
+  state.queueSort = el('queue-sort').value
   renderQueue()
 })
 
